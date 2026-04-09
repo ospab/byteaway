@@ -162,7 +162,7 @@ class WsFrame {
 
   @override
   String toString() =>
-      'WsFrame(cmd=0x${cmd.toRadixString(16)}, session=${_hexId}, payload=${payload.length}B)';
+      'WsFrame(cmd=0x${cmd.toRadixString(16)}, session=$_hexId, payload=${payload.length}B)';
 
   String get _hexId =>
       sessionId.map((b) => b.toRadixString(16).padLeft(2, '0')).join();

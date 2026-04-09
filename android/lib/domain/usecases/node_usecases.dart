@@ -11,13 +11,23 @@ class StartNodeUseCase {
     required String token,
     required String deviceId,
     required String country,
+    String? transportMode,
+    String? connType,
     int? speedMbps,
+    int? mtu,
+    String? masterWsUrl,
+    String? coreConfigJson,
   }) {
     return _repository.startNode(
       token: token,
       deviceId: deviceId,
       country: country,
+      transportMode: transportMode,
+      connType: connType,
       speedMbps: speedMbps,
+      mtu: mtu,
+      masterWsUrl: masterWsUrl,
+      coreConfigJson: coreConfigJson,
     );
   }
 }

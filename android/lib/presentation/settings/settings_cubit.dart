@@ -13,8 +13,11 @@ class SettingsCubit extends Cubit<SettingsState> {
   void _loadSettings() {
     emit(SettingsState(
       speedLimitMbps: _localDs.getSpeedLimit(),
-      wifiOnly: true, // Always locked on
+      wifiOnly: _localDs.getWifiOnly(),
       allowMobileData: _localDs.getAllowMobile(),
+      killSwitch: _localDs.getKillSwitch(),
+      nodeTransportMode: _localDs.getNodeTransportMode(),
+      vpnMtu: _localDs.getVpnMtu(),
     ));
   }
 
@@ -25,9 +28,33 @@ class SettingsCubit extends Cubit<SettingsState> {
     emit(state.copyWith(speedLimitMbps: clamped));
   }
 
-  /// Toggle mobile data sharing (off by default).
+  /// Toggle mobile data sharing.
   Future<void> toggleMobileData(bool allow) async {
     await _localDs.setAllowMobile(allow);
     emit(state.copyWith(allowMobileData: allow));
+  }
+
+  /// Toggle WiFi only sharing.
+  Future<void> toggleWifiOnly(bool wifiOnly) async {
+    await _localDs.setWifiOnly(wifiOnly);
+    emit(state.copyWith(wifiOnly: wifiOnly));
+  }
+
+  /// Toggle Kill Switch for VPN security.
+  Future<void> toggleKillSwitch(bool killSwitch) async {
+    await _localDs.setKillSwitch(killSwitch);
+    emit(state.copyWith(killSwitch: killSwitch));
+  }
+
+  /// Update hidden node transport mode (quic/ws/hy2).
+  Future<void> setNodeTransportMode(String mode) async {
+    await _localDs.setNodeTransportMode(mode);
+    emit(state.copyWith(nodeTransportMode: _localDs.getNodeTransportMode()));
+  }
+
+  /// Update VPN MTU setting.
+  Future<void> setVpnMtu(int mtu) async {
+    await _localDs.setVpnMtu(mtu);
+    emit(state.copyWith(vpnMtu: _localDs.getVpnMtu()));
   }
 }

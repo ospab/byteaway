@@ -21,7 +21,20 @@ dashmap = "5"
 colored = "2"
 sha2 = "0.10"
 hex = "0.4"
-getrandom = "0.2"
+chrono = { version = "0.4", features = ["serde"] }
+tower-http = { version = "0.5", features = ["fs", "limit", "set-header"] }
+quinn = "0.11"
+rustls-pemfile = "2.1"
+argon2 = "0.5"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 
 [patch.crates-io]
 getrandom = { git = "https://github.com/rust-random/getrandom", rev = "v0.2.15" }
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3

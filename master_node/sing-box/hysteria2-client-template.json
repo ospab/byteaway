@@ -1,0 +1,45 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "local-socks",
+      "listen": "127.0.0.1",
+      "listen_port": 10808
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "hysteria2",
+      "tag": "hy2-out",
+      "server": "byteaway.xyz",
+      "server_port": 9443,
+      "password": "G8k3vQ9pLm2sT7xY4nR6cD1hW5jZ0aFp",
+      "tls": {
+        "enabled": true,
+        "server_name": "byteaway.xyz",
+        "alpn": [
+          "h3"
+        ]
+      }
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "domain_suffix": [
+          "byteaway.xyz"
+        ],
+        "outbound": "hy2-out"
+      }
+    ],
+    "final": "direct"
+  }
+}

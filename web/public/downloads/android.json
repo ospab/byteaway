@@ -1,0 +1,41 @@
+{
+  "changelog": "Стабилизация узла, улучшения биллинга и автообновление приложения.",
+  "security": {
+    "anti_rollback": true,
+    "requires_https": true,
+    "nonce": "fd1527e2ab65463185b0255813f8038c",
+    "issued_at": "2026-04-06T19:53:44.5832799Z",
+    "expires_at": "2026-05-06T19:53:44.5859262Z",
+    "allowed_hosts": [
+      "byteaway.xyz"
+    ]
+  },
+  "build_number": 59,
+  "version": "1.0.13",
+  "published_at": "2026-04-06T19:53:44.5832799Z",
+  "rollout": {
+    "cohort": "all",
+    "percentage": 100
+  },
+  "apk_size_bytes": 84526178,
+  "apk": {
+    "sha256": "b7c3ce730667793139b475c8aca7e1198c2237e4038833c0f67a69bae2361754",
+    "url": "https://byteaway.xyz/downloads/byteaway-release.apk",
+    "min_sdk": 21,
+    "mime_type": "application/vnd.android.package-archive",
+    "abi": "universal",
+    "size_bytes": 84526178
+  },
+  "release_notes": [
+    "Стабилизация узла и reconnect логики",
+    "Усилены проверки безопасного обновления",
+    "Улучшена диагностика и контроль целостности APK"
+  ],
+  "min_supported_build": 1,
+  "apk_sha256": "b7c3ce730667793139b475c8aca7e1198c2237e4038833c0f67a69bae2361754",
+  "app_id": "com.ospab.byteaway",
+  "channel": "stable",
+  "schema_version": 2,
+  "mandatory": false,
+  "apk_url": "https://byteaway.xyz/downloads/byteaway-release.apk"
+}

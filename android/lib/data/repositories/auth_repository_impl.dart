@@ -1,4 +1,5 @@
 import '../../core/errors/exceptions.dart';
+import '../../core/logger.dart';
 import '../../core/network/api_client.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../datasources/auth_local_ds.dart';
@@ -16,24 +17,41 @@ class AuthRepositoryImpl implements AuthRepository {
   @override
   Future<bool> login(String token) async {
     try {
-      // Set the token in the API client first
-      _apiClient.setToken(token);
+      AppLogger.log('auth.login register-node request device_id_len=${token.length}');
+      // For B2C we first register by device_id and then use issued token when available.
+      final response = await _apiClient.post(
+        '/api/v1/auth/register-node',
+        data: {'device_id': token},
+      );
 
-      // Validate by calling balance endpoint — 401 means invalid
-      // B2C MOCK: Skip strict validation while backend is not fully connected.
-      // await _apiClient.get('/api/v1/balance');
-      await Future.delayed(const Duration(milliseconds: 600)); // Simulate network
+      // Registration is successful when node_id is returned.
+      if (response.containsKey('node_id')) {
+        final issuedToken = (response['token'] as String?)?.trim();
+        // Prefer server-issued token; fallback keeps legacy compatibility.
+        final bearer = (issuedToken != null && issuedToken.isNotEmpty)
+            ? issuedToken
+            : token;
+        AppLogger.log(
+          'auth.login success node_id_present=true issued_token_present=${issuedToken != null && issuedToken.isNotEmpty}',
+        );
+        _apiClient.setToken(bearer);
+        await _localDs.saveToken(bearer);
+        return true;
+      }
 
-      // Token is valid (or simulated valid) — persist it
-      await _localDs.saveToken(token);
-      return true;
+      AppLogger.log('auth.login failed: register-node response missing node_id');
+      
+      return false;
     } on AuthException {
+      AppLogger.log('auth.login auth_exception');
       _apiClient.clearToken();
       return false;
     } on NetworkException {
+      AppLogger.log('auth.login network_exception');
       _apiClient.clearToken();
       rethrow;
-    } catch (_) {
+    } catch (e) {
+      AppLogger.log('auth.login error=$e');
       _apiClient.clearToken();
       return false;
     }

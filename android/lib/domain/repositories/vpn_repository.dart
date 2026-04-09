@@ -11,6 +11,9 @@ abstract class VpnRepository {
   /// Get current VPN status from native side.
   Future<VpnStatus> getStatus();
 
+  /// Get VLESS configuration from master node with tier info.
+  Future<Map<String, dynamic>> getVpnConfig({bool useRuEgress = false});
+
   /// Stream of VPN status changes from EventChannel.
   Stream<VpnStatus> get statusStream;
 }

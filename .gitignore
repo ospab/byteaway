@@ -28,5 +28,16 @@ Thumbs.db
 
 # Project specific
 .env
+.env.production
+.env.local
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+**/.tmp/
+**/__pycache__/
 *.log
 check_output.txt
+NekoBoxForAndroid
+about.md
+builded

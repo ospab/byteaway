@@ -6,16 +6,19 @@ mod error;
 mod node_manager;
 mod proxy_gateway;
 mod state;
+mod vpn;
 
 use std::sync::Arc;
 use colored::Colorize;
 use config::Config;
+use node_manager::quic_tunnel::{run_quic_server, QuicTunnelState};
 use node_manager::ws_tunnel::TunnelState;
 use node_manager::registry::RedisNodeRegistry;
 use billing::engine::DefaultBillingEngine;
 use billing::BillingEngine;
 use api::routes::build_router;
 use state::AppState;
+use crate::vpn::gateway::{VpnGatewayRegistry, VpnGateway};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
@@ -73,40 +76,97 @@ async fn main() -> anyhow::Result<()> {
     // 4. Инициализация модулей
     let registry = Arc::new(RedisNodeRegistry::new(&config.redis_url)?);
     let authenticator = auth::Authenticator::new(db_pool.clone(), redis_client.clone());
+    let billing_engine = Arc::new(DefaultBillingEngine {
+        db_pool: db_pool.clone(),
+        redis_client: redis_client.clone(),
+        price_per_gb_usd: config.price_per_gb_usd,
+    });
+
+    // 4a. VPN Gateway registry
+    let default_gateway = VpnGateway {
+        id: "default".to_string(),
+        public_host: config.vpn_public_host.clone(),
+        public_port: config.vpn_port,
+        region: Some("default".to_string()),
+        max_clients: 1000,
+        current_clients: 0,
+        is_healthy: true,
+        reality_public_key: config.reality_public_key.clone(),
+        reality_short_id: config.reality_short_id.clone(),
+    };
+    let vpn_registry = Arc::new(VpnGatewayRegistry::new(
+        &config.redis_url,
+        db_pool.clone(),
+        default_gateway,
+    )?);
 
     let app_state = Arc::new(AppState {
         db_pool: db_pool.clone(),
         redis_client: redis_client.clone(),
         registry: registry.clone(),
+        vpn_registry: vpn_registry.clone(),
         authenticator,
+        billing_engine: billing_engine.clone(),
         price_per_gb_usd: config.price_per_gb_usd,
+        socks5_port: config.socks5_port,
+        vpn_public_host: config.vpn_public_host,
+        vpn_port: config.vpn_port,
+        reality_dest: config.reality_dest.clone(),
+        reality_private_key: config.reality_private_key,
+        reality_public_key: config.reality_public_key,
+        reality_short_id: config.reality_short_id,
+        vpn_client_uuid: config.vpn_client_uuid,
+        failed_node_selections: std::sync::atomic::AtomicU32::new(0),
+        turnstile_secret_key: config.turnstile_secret_key,
+        turnstile_verify_url: config.turnstile_verify_url,
+        app_update_manifest_path: config.app_update_manifest_path,
+        public_base_url: config.public_base_url,
     });
+
+
 
     let tunnel_state = Arc::new(TunnelState {
         registry: registry.clone(),
+        app_state: app_state.clone(),
+    });
+
+    let quic_tunnel_state = Arc::new(QuicTunnelState {
+        registry: registry.clone(),
+        app_state: app_state.clone(),
     });
 
     status("✔", "Auth", "authenticator ready");
+    status("✔", "VPN Gateways", "registry ready");
     status("✔", "Billing", format!("${}/GB", config.price_per_gb_usd).as_str());
 
     // 5. REST API + WebSocket сервер
     let api_addr = format!("0.0.0.0:{}", config.api_port);
-    let axum_listener = TcpListener::bind(&api_addr).await?;
+    let axum_listener = TcpListener::bind(&api_addr).await
+        .map_err(|e| anyhow::anyhow!("CRITICAL: API port {} is already in use! ({})", config.api_port, e))?;
+    
     status("▶", "REST API", &format!("http://{}", api_addr));
     status("▶", "WebSocket", &format!("ws://{}/ws", api_addr));
 
     let router = build_router(app_state.clone(), tunnel_state);
     let axum_handle = tokio::spawn(async move {
-        axum::serve(axum_listener, router).await.unwrap();
+        axum::serve(
+            axum_listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 
     // 6. SOCKS5 TCP сервер
     let socks5_addr: std::net::SocketAddr = format!("0.0.0.0:{}", config.socks5_port).parse()?;
+    let socks5_listener = TcpListener::bind(socks5_addr).await
+        .map_err(|e| anyhow::anyhow!("CRITICAL: SOCKS5 port {} is already in use! ({})", config.socks5_port, e))?;
+
     status("▶", "SOCKS5", &format!("socks5://{}", socks5_addr));
 
     let socks_state = app_state.clone();
     let socks_handle = tokio::spawn(async move {
-        proxy_gateway::server::run_socks5_server(socks5_addr, socks_state).await;
+        proxy_gateway::server::run_socks5_server(socks5_listener, socks_state).await;
     });
 
     // 7. Фоновый воркер биллинга (flush Redis → Postgres каждые 60с)
@@ -126,6 +186,23 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // 7a. QUIC node ingress (optional)
+    let quic_handle = if config.node_quic_enabled {
+        let quic_addr: std::net::SocketAddr = format!("0.0.0.0:{}", config.node_quic_port).parse()?;
+        status("▶", "Node QUIC", &format!("quic://{}", quic_addr));
+        let cert_path = config.node_quic_cert_path.clone();
+        let key_path = config.node_quic_key_path.clone();
+        let state = quic_tunnel_state.clone();
+        Some(tokio::spawn(async move {
+            if let Err(e) = run_quic_server(quic_addr, &cert_path, &key_path, state).await {
+                tracing::error!("QUIC node ingress crashed: {e}");
+            }
+        }))
+    } else {
+        status("•", "Node QUIC", "disabled");
+        None
+    };
+
     println!();
     println!("{}", "═══════════════════════════════════════════════".dimmed());
     println!("  {} {}", "Status:".dimmed(), "ALL SYSTEMS ONLINE".green().bold());
@@ -140,6 +217,9 @@ async fn main() -> anyhow::Result<()> {
     axum_handle.abort();
     socks_handle.abort();
     billing_handle.abort();
+    if let Some(h) = quic_handle {
+        h.abort();
+    }
     db_pool.close().await;
 
     println!("  {} {}", "✔".green(), "Master node stopped.".green().bold());

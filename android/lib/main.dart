@@ -1,15 +1,29 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'app/di.dart';
 import 'app/router.dart';
 import 'presentation/auth/auth_cubit.dart';
+import 'presentation/home/home_cubit.dart';
+import 'presentation/settings/settings_cubit.dart';
+import 'presentation/statistics/statistics_cubit.dart';
 import 'presentation/theme/app_theme.dart';
+import 'core/constants.dart';
+import 'core/logger.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Lock to portrait orientation
+  // Redirect debugPrint to AppLogger
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message != null) {
+      AppLogger.log(message);
+      debugPrintThrottled(message, wrapWidth: wrapWidth);
+    }
+  };
+
+  // Lock app to portrait orientation.
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
   ]);
@@ -25,6 +39,16 @@ void main() async {
   // Initialize DI
   await initDependencies();
 
+  // In release builds, route debugPrint through AppLogger only (no console spam).
+  // In debug builds, keep original behavior for full diagnostics.
+  if (!AppConstants.isDevelopment) {
+    debugPrint = (String? message, {int? wrapWidth}) {
+      if (message != null) {
+        AppLogger.log(message);
+      }
+    };
+  }
+
   // Check auth state before routing
   final authCubit = sl<AuthCubit>();
   await authCubit.checkAuth();
@@ -37,17 +61,31 @@ class ByteAwayApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider.value(
-      value: sl<AuthCubit>(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider.value(value: sl<AuthCubit>()),
+        BlocProvider(create: (_) => sl<HomeCubit>()),
+        BlocProvider(create: (_) => sl<StatisticsCubit>()),
+        BlocProvider(create: (_) => sl<SettingsCubit>()),
+      ],
       child: BlocListener<AuthCubit, dynamic>(
         listener: (context, state) {
-          // Re-evaluate routes on auth state change
           appRouter.refresh();
         },
         child: MaterialApp.router(
           title: 'ByteAway',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.darkTheme,
+          builder: (context, child) {
+            final media = MediaQuery.of(context);
+            final clampedScale = media.textScaler.scale(1.0).clamp(0.9, 1.15);
+            return MediaQuery(
+              data: media.copyWith(
+                textScaler: TextScaler.linear(clampedScale),
+              ),
+              child: child ?? const SizedBox.shrink(),
+            );
+          },
           routerConfig: appRouter,
         ),
       ),

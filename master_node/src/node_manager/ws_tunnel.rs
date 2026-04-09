@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 #[derive(Deserialize)]
 pub struct WsAuthQuery {
-    pub device_id: Uuid,
+    pub device_id: String,
     pub token: String,
     pub country: String,
     pub conn_type: String,
@@ -21,17 +21,100 @@ pub struct WsAuthQuery {
 
 pub struct TunnelState {
     pub registry: Arc<dyn NodeRegistry>,
+    pub app_state: Arc<crate::state::AppState>,
 }
 
 /// Axum handler: апгрейд HTTP → WebSocket для мобильных нод
 pub async fn ws_upgrade_handler(
     ws: WebSocketUpgrade,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Query(query): Query<WsAuthQuery>,
     State(state): State<Arc<TunnelState>>,
 ) -> impl IntoResponse {
-    if query.token.is_empty() {
+    // 1. Проверяем токен (api_key) и device_id с защитой от брутфорса
+    let auth_ctx = match state.app_state.authenticator.authenticate(&query.token, &addr.ip().to_string()).await {
+        Ok(auth) => {
+            // Успех: клиент имеет право регистрировать эту ноду
+            info!("WS Auth success for node {} (client: {})", query.device_id, auth.client_id);
+            auth
+        },
+        _ => {
+            warn!("WS Auth failed for node {}", query.device_id);
+            return axum::http::StatusCode::UNAUTHORIZED.into_response();
+        }
+    };
+
+    // Validate that token owner is the same mobile_nodes row as provided device_id.
+    // This keeps HWID binding but also supports legacy rows created before hash-based IDs.
+    let owner_by_device: Option<Uuid> = match sqlx::query_scalar(
+        "SELECT id FROM mobile_nodes WHERE device_id = $1"
+    )
+    .bind(query.device_id.trim())
+    .fetch_optional(&state.app_state.db_pool)
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            error!("WS auth lookup failed for device_id {}: {:?}", query.device_id, e);
+            return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    let owner_node_id = match owner_by_device {
+        Some(v) => v,
+        None => {
+            // Self-heal: if token owner exists as a mobile node, bind new/current device_id to it.
+            let token_owner_exists: Option<Uuid> = match sqlx::query_scalar(
+                "SELECT id FROM mobile_nodes WHERE id = $1"
+            )
+            .bind(auth_ctx.client_id)
+            .fetch_optional(&state.app_state.db_pool)
+            .await
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("WS auth token-owner lookup failed for {}: {:?}", auth_ctx.client_id, e);
+                    return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                }
+            };
+
+            match token_owner_exists {
+                Some(node_id) => {
+                    if let Err(e) = sqlx::query("UPDATE mobile_nodes SET device_id = $1, registered_at = NOW() WHERE id = $2")
+                        .bind(query.device_id.trim())
+                        .bind(node_id)
+                        .execute(&state.app_state.db_pool)
+                        .await
+                    {
+                        error!("WS auth self-heal failed for node {}: {:?}", node_id, e);
+                        return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                    info!(
+                        "WS auth self-healed device mapping: node_id={} new_device_id={}",
+                        node_id,
+                        query.device_id.trim()
+                    );
+                    node_id
+                }
+                None => {
+                    warn!("WS Auth failed: unknown device_id {}", query.device_id);
+                    return axum::http::StatusCode::UNAUTHORIZED.into_response();
+                }
+            }
+        }
+    };
+
+    if auth_ctx.client_id != owner_node_id {
+        warn!(
+            "WS Auth mismatch: token client_id={} but device_id owner is {}",
+            auth_ctx.client_id,
+            owner_node_id
+        );
         return axum::http::StatusCode::UNAUTHORIZED.into_response();
     }
+
+    // Use DB owner ID as canonical registry node id, keeping compatibility.
+    let node_uuid = owner_node_id;
 
     let ct = if query.conn_type.eq_ignore_ascii_case("wifi") {
         ConnectionType::WiFi
@@ -40,8 +123,8 @@ pub async fn ws_upgrade_handler(
     };
 
     let meta = NodeMetadata {
-        node_id: query.device_id,
-        ip_address: "0.0.0.0".parse().unwrap(),
+        node_id: node_uuid,
+        ip_address: "0.0.0.0".parse().unwrap(), // IP будет определен позже если нужно
         country: query.country,
         connection_type: ct,
         speed_mbps: query.speed_mbps.unwrap_or(50),
@@ -139,9 +222,11 @@ async fn handle_socket(mut socket: WebSocket, meta: NodeMetadata, state: Arc<Tun
                             match cmd {
                                 wire::CMD_DATA => {
                                     if let Some(tx) = sessions.get(&sid) {
-                                        if tx.send(payload.to_vec()).await.is_err() {
-                                            sessions.remove(&sid);
-                                        }
+                                        let tx = tx.clone();
+                                        let payload = payload.to_vec();
+                                        tokio::spawn(async move {
+                                            let _ = tx.send(payload).await;
+                                        });
                                     }
                                 }
                                 wire::CMD_CLOSE => {

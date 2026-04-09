@@ -1,4 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import '../../data/datasources/auth_local_ds.dart';
+import '../../core/services/device_info_service.dart';
 import '../../domain/repositories/auth_repository.dart';
 import '../../domain/usecases/login_usecase.dart';
 import 'auth_state.dart';
@@ -7,14 +9,25 @@ import 'auth_state.dart';
 class AuthCubit extends Cubit<AuthState> {
   final LoginUseCase _loginUseCase;
   final AuthRepository _authRepository;
+  final AuthLocalDataSource _authLocalDs;
 
-  AuthCubit(this._loginUseCase, this._authRepository) : super(const AuthInitial());
+  AuthCubit(this._loginUseCase, this._authRepository, this._authLocalDs)
+      : super(const AuthInitial());
 
   /// Check if already logged in on app startup.
   Future<void> checkAuth() async {
-    final isLoggedIn = await _authRepository.isLoggedIn();
-    if (isLoggedIn) {
-      emit(const AuthSuccess());
+    final storedId = _authLocalDs.getDeviceId();
+    if (storedId == null || !_isValidDeviceId(storedId)) {
+      return;
+    }
+
+    try {
+      final success = await _loginUseCase(storedId);
+      if (success) {
+        emit(const AuthSuccess());
+      }
+    } catch (_) {
+      // Keep initial state; user can retry from login screen.
     }
   }
 
@@ -23,18 +36,25 @@ class AuthCubit extends Cubit<AuthState> {
     emit(const AuthLoading());
 
     try {
-      // For B2C, we generate a random UUID as the device token to authenticate with the network.
-      // E.g. using a unique device identifier or generated UUID. We'll simulate a UUID here
-      // since we aren't adding the 'uuid' package check if it's imported yet, but we saw it in pubspec.yaml.
-      // Wait, let's just create a strong timestamp-based mock UUID or use the uuid package if we import it.
-      // Better yet, just pass a dummy "b2c-device-token" for now until the backend is fully connected.
-      final dummyDeviceToken = 'b2c-node-' + DateTime.now().millisecondsSinceEpoch.toString();
+      final hardwareId = await DeviceInfoService.getHardwareId();
+      final storedId = _authLocalDs.getDeviceId();
+      String deviceId;
+
+      if (_isValidDeviceId(hardwareId)) {
+        deviceId = hardwareId;
+        await _authLocalDs.saveDeviceId(deviceId);
+      } else if (storedId != null && _isValidDeviceId(storedId)) {
+        deviceId = storedId;
+      } else {
+        emit(const AuthFailureState('Не удалось получить стабильный HWID устройства. Перезапустите приложение и попробуйте снова.'));
+        return;
+      }
       
-      final success = await _loginUseCase(dummyDeviceToken);
+      final success = await _loginUseCase(deviceId);
       if (success) {
         emit(const AuthSuccess());
       } else {
-        emit(const AuthFailureState('Не удалось инициализировать соединение. Попробуйте позже.'));
+        emit(const AuthFailureState('Не удалось инициализировать сессию. Попробуйте позже.'));
       }
     } catch (e) {
       emit(AuthFailureState('Ошибка подключения: ${e.toString()}'));
@@ -45,5 +65,14 @@ class AuthCubit extends Cubit<AuthState> {
   Future<void> logout() async {
     await _authRepository.logout();
     emit(const AuthInitial());
+  }
+
+  bool _isValidDeviceId(String? id) {
+    if (id == null) return false;
+    final value = id.trim().toLowerCase();
+    if (value.isEmpty) return false;
+    if (value == 'unknown-hwid') return false;
+    if (value == 'unknown-device') return false;
+    return true;
   }
 }

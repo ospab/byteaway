@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ByteAway Admin Panel</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1419;
+            color: #e6edf3;
+            min-height: 100vh;
+        }
+        .header {
+            background: #161b22;
+            padding: 1rem 2rem;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .logo { font-size: 1.5rem; font-weight: bold; color: #58a6ff; }
+        .nav { display: flex; gap: 1rem; }
+        .nav button {
+            background: #21262d;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .nav button:hover { background: #30363d; }
+        .nav button.active { background: #238636; border-color: #238636; color: white; }
+        .container { padding: 2rem; max-width: 1400px; margin: 0 auto; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1.5rem;
+        }
+        .stat-label { color: #8b949e; font-size: 0.875rem; margin-bottom: 0.5rem; }
+        .stat-value { font-size: 1.75rem; font-weight: bold; color: #58a6ff; }
+        .section {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        .section h2 {
+            font-size: 1.25rem;
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.875rem;
+        }
+        th, td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #30363d;
+        }
+        th {
+            color: #8b949e;
+            font-weight: 500;
+            background: #0d1117;
+        }
+        tr:hover { background: #21262d; }
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .status.online { background: rgba(35, 134, 54, 0.2); color: #3fb950; }
+        .status.offline { background: rgba(248, 81, 73, 0.2); color: #f85149; }
+        .status.free { background: rgba(139, 148, 158, 0.2); color: #8b949e; }
+        .status.paid { background: rgba(88, 166, 255, 0.2); color: #58a6ff; }
+        .btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #c9d1d9;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.875rem;
+            transition: all 0.2s;
+        }
+        .btn:hover { background: #30363d; }
+        .btn-primary { background: #238636; border-color: #238636; color: white; }
+        .btn-primary:hover { background: #2ea043; }
+        .btn-danger { background: #da3633; border-color: #da3633; color: white; }
+        .btn-danger:hover { background: #f85149; }
+        .input {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            color: #c9d1d9;
+            padding: 0.5rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            width: 100%;
+        }
+        .input:focus {
+            outline: none;
+            border-color: #58a6ff;
+        }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #8b949e;
+            font-size: 0.875rem;
+        }
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal-overlay.active { display: flex; }
+        .modal {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 2rem;
+            min-width: 400px;
+            max-width: 90vw;
+        }
+        .modal h3 { margin-bottom: 1.5rem; }
+        .modal-actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+        .hidden { display: none !important; }
+        .badge {
+            display: inline-flex;
+            padding: 0.125rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .badge-wifi { background: rgba(88, 166, 255, 0.2); color: #58a6ff; }
+        .badge-cell { background: rgba(35, 134, 54, 0.2); color: #3fb950; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="logo">🔒 ByteAway Admin</div>
+        <div class="nav">
+            <button class="active" onclick="showTab('dashboard')">Dashboard</button>
+            <button onclick="showTab('clients')">Clients</button>
+            <button onclick="showTab('nodes')">Nodes</button>
+            <button onclick="showTab('vpn')">VPN</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Dashboard Tab -->
+        <div id="dashboard" class="tab-content">
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">Total Clients</div>
+                    <div class="stat-value" id="totalClients">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Active Nodes</div>
+                    <div class="stat-value" id="activeNodes">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Active VPN Sessions</div>
+                    <div class="stat-value" id="activeVpn">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Total Traffic (GB)</div>
+                    <div class="stat-value" id="totalTraffic">-</div>
+                </div>
+            </div>
+
+            <div class="section">
+                <h2>⚡ Quick Actions</h2>
+                <div style="display: flex; gap: 1rem;">
+                    <button class="btn btn-primary" onclick="showModal('addBalanceModal')">💰 Add Balance</button>
+                    <button class="btn" onclick="showModal('createClientModal')">👤 Create Client</button>
+                    <button class="btn" onclick="loadStats()">🔄 Refresh</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Clients Tab -->
+        <div id="clients" class="tab-content hidden">
+            <div class="section">
+                <h2>👤 Clients</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Email</th>
+                            <th>Balance</th>
+                            <th>Tier</th>
+                            <th>Created</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="clientsTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Nodes Tab -->
+        <div id="nodes" class="tab-content hidden">
+            <div class="section">
+                <h2>📱 Mobile Nodes</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Node ID</th>
+                            <th>Status</th>
+                            <th>Country</th>
+                            <th>Connection</th>
+                            <th>Sessions</th>
+                            <th>Uptime</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nodesTable"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- VPN Tab -->
+        <div id="vpn" class="tab-content hidden">
+            <div class="section">
+                <h2>🔐 VPN Sessions</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Client</th>
+                            <th>IP</th>
+                            <th>Gateway</th>
+                            <th>Download</th>
+                            <th>Upload</th>
+                            <th>Started</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="vpnTable"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Balance Modal -->
+    <div id="addBalanceModal" class="modal-overlay">
+        <div class="modal">
+            <h3>💰 Add Balance</h3>
+            <div class="form-group">
+                <label>Client ID (UUID)</label>
+                <input type="text" class="input" id="balanceClientId" placeholder="00000000-0000-0000-0000-000000000000">
+            </div>
+            <div class="form-group">
+                <label>Amount (USD)</label>
+                <input type="number" class="input" id="balanceAmount" placeholder="10.00" step="0.01">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="hideModal('addBalanceModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="addBalance()">Add Balance</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Client Modal -->
+    <div id="createClientModal" class="modal-overlay">
+        <div class="modal">
+            <h3>👤 Create Client</h3>
+            <div class="form-group">
+                <label>Email</label>
+                <input type="email" class="input" id="clientEmail" placeholder="client@example.com">
+            </div>
+            <div class="form-group">
+                <label>Initial Balance (USD)</label>
+                <input type="number" class="input" id="clientBalance" placeholder="0.00" step="0.01" value="10.00">
+            </div>
+            <div class="modal-actions">
+                <button class="btn" onclick="hideModal('createClientModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="createClient()">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = window.location.origin;
+        let currentTab = 'dashboard';
+
+        function showTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(tab).classList.remove('hidden');
+            document.querySelectorAll('.nav button').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            currentTab = tab;
+            
+            if (tab === 'clients') loadClients();
+            if (tab === 'nodes') loadNodes();
+            if (tab === 'vpn') loadVpn();
+        }
+
+        function showModal(id) {
+            document.getElementById(id).classList.add('active');
+        }
+
+        function hideModal(id) {
+            document.getElementById(id).classList.remove('active');
+        }
+
+        async function loadStats() {
+            try {
+                const res = await fetch(`${API_BASE}/api/v1/stats`);
+                const data = await res.json();
+                document.getElementById('totalClients').textContent = data.total_clients || '-';
+                document.getElementById('activeNodes').textContent = data.active_nodes || '-';
+                document.getElementById('activeVpn').textContent = data.active_vpn || '-';
+                document.getElementById('totalTraffic').textContent = data.total_traffic_gb || '-';
+            } catch (e) {
+                console.error('Failed to load stats:', e);
+            }
+        }
+
+        async function loadClients() {
+            try {
+                // This would need a real endpoint
+                const clients = [
+                    { id: 'uuid-1', email: 'test@example.com', balance: 5.50, tier: 'free', created: '2024-01-15' },
+                    { id: 'uuid-2', email: 'paid@example.com', balance: 25.00, tier: 'paid', created: '2024-01-10' },
+                ];
+                
+                const html = clients.map(c => `
+                    <tr>
+                        <td>${c.id.substring(0, 8)}...</td>
+                        <td>${c.email}</td>
+                        <td>$${c.balance.toFixed(2)}</td>
+                        <td><span class="status ${c.tier}">${c.tier.toUpperCase()}</span></td>
+                        <td>${c.created}</td>
+                        <td>
+                            <button class="btn" onclick="document.getElementById('balanceClientId').value='${c.id}';showModal('addBalanceModal')">Add $</button>
+                        </td>
+                    </tr>
+                `).join('');
+                
+                document.getElementById('clientsTable').innerHTML = html;
+            } catch (e) {
+                console.error('Failed to load clients:', e);
+            }
+        }
+
+        async function loadNodes() {
+            try {
+                // This would need a real endpoint
+                const nodes = [
+                    { id: 'node-1', status: 'online', country: 'RU', conn: 'wifi', sessions: 3, uptime: '2h 15m' },
+                    { id: 'node-2', status: 'offline', country: 'US', conn: 'cellular', sessions: 0, uptime: '-' },
+                ];
+                
+                const html = nodes.map(n => `
+                    <tr>
+                        <td>${n.id}</td>
+                        <td><span class="status ${n.status}">${n.status.toUpperCase()}</span></td>
+                        <td>${n.country}</td>
+                        <td><span class="badge badge-${n.conn}">${n.conn.toUpperCase()}</span></td>
+                        <td>${n.sessions}</td>
+                        <td>${n.uptime}</td>
+                    </tr>
+                `).join('');
+                
+                document.getElementById('nodesTable').innerHTML = html;
+            } catch (e) {
+                console.error('Failed to load nodes:', e);
+            }
+        }
+
+        async function loadVpn() {
+            try {
+                // This would need a real endpoint
+                const sessions = [
+                    { client: 'user-1', ip: '10.8.0.5', gateway: 'default', down: '1.2 GB', up: '450 MB', started: '10 min ago', status: 'active' },
+                ];
+                
+                const html = sessions.map(s => `
+                    <tr>
+                        <td>${s.client}</td>
+                        <td>${s.ip}</td>
+                        <td>${s.gateway}</td>
+                        <td>${s.down}</td>
+                        <td>${s.up}</td>
+                        <td>${s.started}</td>
+                        <td><span class="status online">ACTIVE</span></td>
+                    </tr>
+                `).join('');
+                
+                document.getElementById('vpnTable').innerHTML = html;
+            } catch (e) {
+                console.error('Failed to load VPN:', e);
+            }
+        }
+
+        async function addBalance() {
+            const clientId = document.getElementById('balanceClientId').value;
+            const amount = parseFloat(document.getElementById('balanceAmount').value);
+            
+            if (!clientId || !amount) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            // SQL command to show user
+            const sql = `UPDATE clients SET balance_usd = balance_usd + ${amount.toFixed(2)} WHERE id = '${clientId}';`;
+            console.log('Execute this SQL:', sql);
+            alert('SQL command logged to console. Run it in your database.');
+            
+            hideModal('addBalanceModal');
+            if (currentTab === 'clients') loadClients();
+        }
+
+        async function createClient() {
+            const email = document.getElementById('clientEmail').value;
+            const balance = parseFloat(document.getElementById('clientBalance').value) || 0;
+            
+            if (!email) {
+                alert('Please enter email');
+                return;
+            }
+
+            // SQL command to show user
+            const sql = `INSERT INTO clients (id, email, balance_usd, created_at) VALUES (gen_random_uuid(), '${email}', ${balance.toFixed(2)}, NOW());`;
+            console.log('Execute this SQL:', sql);
+            alert('SQL command logged to console. Run it in your database.');
+            
+            hideModal('createClientModal');
+            if (currentTab === 'clients') loadClients();
+        }
+
+        // Load initial stats
+        loadStats();
+        setInterval(loadStats, 30000); // Refresh every 30s
+    </script>
+</body>
+</html>

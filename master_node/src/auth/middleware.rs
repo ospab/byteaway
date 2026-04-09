@@ -12,6 +12,7 @@ use tracing::warn;
 /// аутентифицирует клиента и кладёт AuthContext в request extensions.
 pub async fn require_auth(
     State(state): State<Arc<AppState>>,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, AppError> {
@@ -28,8 +29,9 @@ pub async fn require_auth(
         .strip_prefix("Bearer ")
         .ok_or(AppError::Unauthorized)?;
 
-    let context = state.authenticator.authenticate(api_key).await?;
+    let context = state.authenticator.authenticate(api_key, &addr.ip().to_string()).await?;
     req.extensions_mut().insert(context);
+
 
     Ok(next.run(req).await)
 }

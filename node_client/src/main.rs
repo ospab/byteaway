@@ -56,7 +56,7 @@ async fn main() -> anyhow::Result<()> {
                 let _ = ws_back_tx.send(Message::Pong(p)).await;
                 continue;
             }
-            Ok(Message::Close(_)) | None => break,
+            Ok(Message::Close(_)) => break,
             Ok(_) => continue,
             Err(e) => {
                 error!("WebSocket receive error: {}", e);

@@ -35,7 +35,7 @@ class VpnStatus extends Equatable {
         bytesOut = 0,
         errorMessage = null;
 
-  bool get isActive => state == VpnConnectionState.connected;
+  bool get isActive => state == VpnConnectionState.connected || state == VpnConnectionState.connecting;
 
   @override
   List<Object?> get props => [state, serverAddress, uptime, bytesIn, bytesOut, errorMessage];

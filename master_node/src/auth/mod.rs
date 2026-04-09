@@ -11,6 +11,7 @@ use tracing::debug;
 #[derive(Clone, Debug)]
 pub struct AuthContext {
     pub client_id: uuid::Uuid,
+    #[allow(dead_code)]
     pub available_balance_usd: f64,
 }
 
@@ -38,8 +39,26 @@ impl Authenticator {
     }
 
     /// Проверяет API-ключ. Сначала Redis кеш, затем Postgres.
-    pub async fn authenticate(&self, api_key: &str) -> Result<AuthContext, AppError> {
+    /// Включает защиту от брутфорса по IP.
+    pub async fn authenticate(&self, api_key: &str, client_ip: &str) -> Result<AuthContext, AppError> {
+        // 0. Защита от брутфорса
+        self.check_brute_force(client_ip, api_key).await?;
+
+        let res = self.do_authenticate(api_key).await;
+
+        if res.is_err() {
+            self.record_auth_failure(client_ip, api_key).await?;
+        } else {
+            self.clear_auth_failures(client_ip, api_key).await?;
+        }
+
+        res
+    }
+
+    async fn do_authenticate(&self, api_key: &str) -> Result<AuthContext, AppError> {
+        let api_key = api_key.trim_matches(|c: char| c.is_whitespace() || c == '\0');
         let key_hash = Self::hash_key(api_key);
+        debug!("Checking key_hash: {}", key_hash);
         let cache_key = format!("auth:cache:{}", key_hash);
 
         // 1. Проверяем Redis кеш
@@ -59,7 +78,7 @@ impl Authenticator {
             }
         }
 
-        // 2. Фоллбек в PostgreSQL: Сначала ищем B2B клиента по ключу
+        // 2. Фоллбек в PostgreSQL
         let row = sqlx::query(
             "SELECT c.id, c.balance_usd::float8 as balance \
              FROM clients c \
@@ -75,7 +94,6 @@ impl Authenticator {
             let client_id: uuid::Uuid = r.get("id");
             let balance: f64 = r.get("balance");
 
-            // Кешируем в Redis
             let cached = CachedAuth { client_id, balance_usd: balance };
             let json = serde_json::to_string(&cached).unwrap_or_default();
             let _: () = conn.set_ex(&cache_key, json, 60).await.map_err(AppError::Redis)?;
@@ -86,12 +104,11 @@ impl Authenticator {
             });
         }
 
-        // 3. Если B2B ключ не найден, проверяем, не является ли это B2C Device ID
-        // (Для простоты считаем, что B2C ноды имеют фиксированный баланс или бесконечный доступ)
+        // 3. Проверяем B2C Device ID
         let node_row = sqlx::query(
             "SELECT id FROM mobile_nodes WHERE device_id = $1",
         )
-        .bind(api_key) // Мы передавали device_id как токен в Android приложении
+        .bind(api_key)
         .fetch_optional(&self.db_pool)
         .await
         .map_err(AppError::Database)?;
@@ -100,10 +117,124 @@ impl Authenticator {
             let node_id: uuid::Uuid = r.get("id");
             return Ok(AuthContext {
                 client_id: node_id,
-                available_balance_usd: 1000.0, // Условный безлимит для B2C нод
+                available_balance_usd: 1000.0,
+            });
+        }
+
+        // 3b. Проверяем B2C токен как mobile_nodes.id (server-issued token)
+        if let Ok(node_uuid) = uuid::Uuid::parse_str(api_key) {
+            let by_id = sqlx::query(
+                "SELECT id FROM mobile_nodes WHERE id = $1",
+            )
+            .bind(node_uuid)
+            .fetch_optional(&self.db_pool)
+            .await
+            .map_err(AppError::Database)?;
+
+            if by_id.is_some() {
+                return Ok(AuthContext {
+                    client_id: node_uuid,
+                    available_balance_usd: 1000.0,
+                });
+            }
+        }
+
+        // 4. Автопровижининг B2C
+        if let Ok(device_uuid) = uuid::Uuid::parse_str(api_key) {
+            let mut tx = self.db_pool.begin().await.map_err(AppError::Database)?;
+
+            let node_id: uuid::Uuid = sqlx::query_scalar(
+                "INSERT INTO mobile_nodes (id, device_id) \
+                 VALUES ($1, $2) \
+                 ON CONFLICT (device_id) DO UPDATE SET registered_at = NOW() \
+                 RETURNING id",
+            )
+            .bind(device_uuid)
+            .bind(api_key)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(AppError::Database)?;
+
+            sqlx::query(
+                "INSERT INTO clients (id, email, balance_usd) \
+                 VALUES ($1, $2, 0.0) \
+                 ON CONFLICT DO NOTHING",
+            )
+            .bind(node_id)
+            .bind(format!("{}@byteaway.internal", api_key))
+            .execute(&mut *tx)
+            .await
+            .map_err(AppError::Database)?;
+
+            tx.commit().await.map_err(AppError::Database)?;
+
+            debug!("Auto-provisioned B2C node for device_id={}", api_key);
+            return Ok(AuthContext {
+                client_id: node_id,
+                available_balance_usd: 1000.0,
             });
         }
 
         Err(AppError::Unauthorized)
+    }
+
+    fn brute_force_scope(ip: &str, api_key: &str) -> String {
+        // Scope by IP + key fingerprint to avoid blocking all users behind shared NAT.
+        format!("{}:{}", ip, Self::hash_key(api_key))
+    }
+
+    /// Проверяет, не заблокирован ли IP+ключ за перебор
+    async fn check_brute_force(&self, ip: &str, api_key: &str) -> Result<(), AppError> {
+        let mut conn = self.redis_client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(AppError::Redis)?;
+
+        let scope = Self::brute_force_scope(ip, api_key);
+        let ban_key = format!("auth:ban:{}", scope);
+        let banned: Option<bool> = conn.get(&ban_key).await.map_err(AppError::Redis)?;
+
+        if banned.unwrap_or(false) {
+            tracing::warn!("Blocked request from banned scope: ip={}", ip);
+            return Err(AppError::Unauthorized);
+        }
+
+        Ok(())
+    }
+
+    /// Записывает неудачную попытку и банит при превышении (5 попыток) в рамках IP+ключ.
+    async fn record_auth_failure(&self, ip: &str, api_key: &str) -> Result<(), AppError> {
+        let mut conn = self.redis_client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(AppError::Redis)?;
+
+        let scope = Self::brute_force_scope(ip, api_key);
+        let fail_key = format!("auth:fails:{}", scope);
+        let fails: u32 = conn.incr(&fail_key, 1).await.map_err(AppError::Redis)?;
+
+        // Устанавливаем TTL для счетчика неудач (15 минут)
+        let _: () = conn.expire(&fail_key, 900).await.map_err(AppError::Redis)?;
+
+        if fails >= 5 {
+            tracing::error!("IP {} key-scope banned for 10 minutes due to multiple auth failures", ip);
+            let ban_key = format!("auth:ban:{}", scope);
+            let _: () = conn.set_ex(&ban_key, true, 600).await.map_err(AppError::Redis)?;
+            let _: () = conn.del(&fail_key).await.map_err(AppError::Redis)?;
+        }
+
+        Ok(())
+    }
+
+    async fn clear_auth_failures(&self, ip: &str, api_key: &str) -> Result<(), AppError> {
+        let mut conn = self.redis_client
+            .get_multiplexed_async_connection()
+            .await
+            .map_err(AppError::Redis)?;
+
+        let scope = Self::brute_force_scope(ip, api_key);
+        let fail_key = format!("auth:fails:{}", scope);
+        let _: () = conn.del(&fail_key).await.map_err(AppError::Redis)?;
+        Ok(())
     }
 }

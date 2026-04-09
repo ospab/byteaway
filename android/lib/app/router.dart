@@ -5,52 +5,31 @@ import 'di.dart';
 import '../presentation/auth/auth_cubit.dart';
 import '../presentation/auth/auth_state.dart';
 import '../presentation/auth/auth_screen.dart';
-import '../presentation/home/home_cubit.dart';
 import '../presentation/home/home_screen.dart';
-import '../presentation/settings/settings_cubit.dart';
 import '../presentation/settings/settings_screen.dart';
-import '../presentation/statistics/statistics_cubit.dart';
 import '../presentation/statistics/statistics_screen.dart';
-import '../presentation/theme/app_theme.dart';
+import '../presentation/registration/registration_screen.dart';
+import '../presentation/settings/log_screen.dart';
 
 /// Main app shell with bottom navigation.
-class AppShell extends StatefulWidget {
-  final Widget child;
-  const AppShell({super.key, required this.child});
+class AppShell extends StatelessWidget {
+  final StatefulNavigationShell navigationShell;
 
-  @override
-  State<AppShell> createState() => _AppShellState();
-}
-
-class _AppShellState extends State<AppShell> {
-  int _currentIndex = 0;
+  const AppShell({super.key, required this.navigationShell});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: widget.child,
+      body: navigationShell,
       bottomNavigationBar: Container(
         decoration: BoxDecoration(
           border: Border(
-            top: BorderSide(color: Colors.white.withOpacity(0.05)),
+            top: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
           ),
         ),
         child: BottomNavigationBar(
-          currentIndex: _currentIndex,
-          onTap: (index) {
-            setState(() => _currentIndex = index);
-            switch (index) {
-              case 0:
-                context.go('/');
-                break;
-              case 1:
-                context.go('/statistics');
-                break;
-              case 2:
-                context.go('/settings');
-                break;
-            }
-          },
+          currentIndex: navigationShell.currentIndex,
+          onTap: (index) => navigationShell.goBranch(index),
           items: const [
             BottomNavigationBarItem(
               icon: Icon(Icons.home_rounded),
@@ -80,18 +59,20 @@ final GoRouter appRouter = GoRouter(
   redirect: (context, state) {
     final authCubit = sl<AuthCubit>();
     final isLoggedIn = authCubit.state is AuthSuccess;
-    final isLoginRoute = state.matchedLocation == '/login';
 
-    if (!isLoggedIn && !isLoginRoute) {
+    final isLoginRoute = state.matchedLocation == '/login';
+    final isRegisterRoute = state.matchedLocation == '/register';
+
+    if (!isLoggedIn && !isLoginRoute && !isRegisterRoute) {
       return '/login';
     }
-    if (isLoggedIn && isLoginRoute) {
+    if (isLoggedIn && (isLoginRoute || isRegisterRoute)) {
       return '/';
     }
     return null;
   },
   routes: [
-    // Auth
+    // Auth routes
     GoRoute(
       path: '/login',
       builder: (context, state) => BlocProvider.value(
@@ -99,33 +80,48 @@ final GoRouter appRouter = GoRouter(
         child: const AuthScreen(),
       ),
     ),
+    GoRoute(
+      path: '/register',
+      builder: (context, state) => const RegistrationScreen(),
+    ),
 
-    // Main shell with bottom nav
-    ShellRoute(
-      builder: (context, state, child) => AppShell(child: child),
-      routes: [
-        GoRoute(
-          path: '/',
-          builder: (context, state) => BlocProvider(
-            create: (_) => sl<HomeCubit>(),
-            child: const HomeScreen(),
-          ),
+    // Stateful shell route for bottom navigation
+    StatefulShellRoute.indexedStack(
+      builder: (context, state, navigationShell) {
+        return AppShell(navigationShell: navigationShell);
+      },
+      branches: [
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/',
+              builder: (context, state) => const HomeScreen(),
+            ),
+          ],
         ),
-        GoRoute(
-          path: '/statistics',
-          builder: (context, state) => BlocProvider(
-            create: (_) => sl<StatisticsCubit>(),
-            child: const StatisticsScreen(),
-          ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/statistics',
+              builder: (context, state) => const StatisticsScreen(),
+            ),
+          ],
         ),
-        GoRoute(
-          path: '/settings',
-          builder: (context, state) => BlocProvider(
-            create: (_) => sl<SettingsCubit>(),
-            child: const SettingsScreen(),
-          ),
+        StatefulShellBranch(
+          routes: [
+            GoRoute(
+              path: '/settings',
+              builder: (context, state) => const SettingsScreen(),
+            ),
+          ],
         ),
       ],
+    ),
+
+    // Secondary routes
+    GoRoute(
+      path: '/logs',
+      builder: (context, state) => const LogScreen(),
     ),
   ],
 );

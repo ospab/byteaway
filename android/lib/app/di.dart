@@ -60,7 +60,7 @@ Future<void> initDependencies() async {
     () => AuthRepositoryImpl(sl<AuthLocalDataSource>(), sl<ApiClient>()),
   );
   sl.registerLazySingleton<VpnRepository>(
-    () => VpnRepositoryImpl(),
+    () => VpnRepositoryImpl(sl<ApiClient>(), sl<AuthLocalDataSource>()),
   );
   sl.registerLazySingleton<NodeRepository>(
     () => NodeRepositoryImpl(sl<NodeRemoteDataSource>()),
@@ -82,7 +82,7 @@ Future<void> initDependencies() async {
 
   // ── Cubits ───────────────────────────────────────────
   sl.registerLazySingleton<AuthCubit>(
-    () => AuthCubit(sl<LoginUseCase>(), sl<AuthRepository>()),
+    () => AuthCubit(sl<LoginUseCase>(), sl<AuthRepository>(), sl<AuthLocalDataSource>()),
   );
   sl.registerFactory<HomeCubit>(
     () => HomeCubit(
@@ -91,6 +91,7 @@ Future<void> initDependencies() async {
       startNode: sl<StartNodeUseCase>(),
       stopNode: sl<StopNodeUseCase>(),
       getBalance: sl<GetBalanceUseCase>(),
+      getTrafficHistory: sl<GetTrafficHistoryUseCase>(),
       vpnRepository: sl<VpnRepository>(),
       nodeRepository: sl<NodeRepository>(),
       authLocalDs: sl<AuthLocalDataSource>(),

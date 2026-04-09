@@ -131,12 +131,17 @@ impl NodeRegistry for RedisNodeRegistry {
     async fn find_node(&self, country: Option<&str>, conn_type: Option<ConnectionType>) -> Result<Uuid, AppError> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await.map_err(AppError::Redis)?;
 
-        let candidates: Vec<String> = if let Some(c) = country {
+        let mut candidates: Vec<String> = if let Some(c) = country {
             conn.smembers(Self::country_set_key(c)).await.map_err(AppError::Redis)?
         } else {
             // Если страна не указана, берём все ноды из памяти
             self.active_connections.iter().map(|e| e.key().to_string()).collect()
         };
+
+        // Fallback: if no nodes in requested country, try any live node.
+        if candidates.is_empty() {
+            candidates = self.active_connections.iter().map(|e| e.key().to_string()).collect();
+        }
 
         if candidates.is_empty() {
             return Err(AppError::NodeOffline);
@@ -150,6 +155,16 @@ impl NodeRegistry for RedisNodeRegistry {
                 Ok(id) => id,
                 Err(_) => continue,
             };
+
+            // Проверяем жива ли нода в Redis
+            let is_live: bool = conn.exists(Self::live_key(nid)).await.unwrap_or(false);
+            if !is_live {
+                // Если в Redis нет, а в Set или DashMap есть — чистим (лениво)
+                if let Some(c) = country {
+                    let _: () = conn.srem(Self::country_set_key(c), &cid).await.unwrap_or_default();
+                }
+                continue;
+            }
 
             if let Some(entry) = self.active_connections.get(&nid) {
                 // Фильтр по типу соединения

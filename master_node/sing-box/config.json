@@ -1,0 +1,81 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "udp",
+        "tag": "dns-direct",
+        "server": "8.8.8.8",
+        "server_port": 53
+      }
+    ],
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-reality-in",
+      "listen": "::",
+      "listen_port": 5443,
+      "users": [
+        {
+          "uuid": "49557a2f-e8b8-4c63-9524-76839a8579ca",
+          "flow": "xtls-rprx-vision"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "aws.com",
+        "reality": {
+          "enabled": true,
+          "handshake": {
+            "server": "aws.com",
+            "server_port": 443
+          },
+          "private_key": "SNm5cdw-Ka53LvCKO8K4syIeiPubdAqF7atFUHGvSF4",
+          "short_id": [
+            "12345678"
+          ]
+        }
+      }
+    },
+    {
+      "type": "hysteria2",
+      "tag": "hysteria2-in",
+      "listen": "::",
+      "listen_port": 5443,
+      "users": [
+        {
+          "password": "49557a2f-e8b8-4c63-9524-76839a8579ca"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "certificate_path": "/etc/letsencrypt/live/byteaway.xyz/fullchain.pem",
+        "key_path": "/etc/letsencrypt/live/byteaway.xyz/privkey.pem"
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": "dns",
+        "action": "hijack-dns"
+      }
+    ],
+    "auto_detect_interface": true
+  }
+}

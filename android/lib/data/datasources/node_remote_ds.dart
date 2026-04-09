@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../../core/constants.dart';
+import '../../core/logger.dart';
 import '../models/node_status_model.dart';
 
 /// Data source that bridges Platform Channel events for node status.
@@ -28,8 +30,18 @@ class NodeRemoteDataSource {
     required String token,
     required String deviceId,
     required String country,
+    String? transportMode,
+    String? connType,
     int? speedMbps,
+    int? mtu,
+    String? masterWsUrl,
+    String? coreConfigJson,
   }) async {
+    final mode = transportMode ?? 'quic';
+    final conn = connType ?? 'unknown';
+    final speed = speedMbps ?? AppConstants.defaultSpeedLimitMbps;
+    debugPrint('ByteAway [Node]: Requesting start sharing (transport: $mode, country: $country, connType: $conn, speed: $speed Mbps)');
+    AppLogger.log('node.start request transport=$mode country=$country connType=$conn speed=${speed}Mbps');
     try {
       final result = await _methodChannel.invokeMethod<bool>(
         'startNode',
@@ -37,11 +49,22 @@ class NodeRemoteDataSource {
           'token': token,
           'deviceId': deviceId,
           'country': country,
+          'transportMode': transportMode ?? 'quic',
+          'connType': connType ?? 'unknown',
           'speedMbps': speedMbps ?? AppConstants.defaultSpeedLimitMbps,
+          'mtu': mtu,
+          'masterWsUrl': masterWsUrl,
+          'coreConfigJson': coreConfigJson,
         },
       );
-      return result ?? false;
-    } on PlatformException {
+      final ok = result ?? false;
+      AppLogger.log('node.start result=$ok transport=$mode country=$country connType=$conn');
+      return ok;
+    } on PlatformException catch (e) {
+      AppLogger.log('node.start platform_error code=${e.code} message=${e.message ?? ""}');
+      return false;
+    } catch (e) {
+      AppLogger.log('node.start error=$e');
       return false;
     }
   }
@@ -49,9 +72,16 @@ class NodeRemoteDataSource {
   /// Stop sharing.
   Future<bool> stopNode() async {
     try {
+      AppLogger.log('node.stop request');
       final result = await _methodChannel.invokeMethod<bool>('stopNode');
-      return result ?? false;
-    } on PlatformException {
+      final ok = result ?? false;
+      AppLogger.log('node.stop result=$ok');
+      return ok;
+    } on PlatformException catch (e) {
+      AppLogger.log('node.stop platform_error code=${e.code} message=${e.message ?? ""}');
+      return false;
+    } catch (e) {
+      AppLogger.log('node.stop error=$e');
       return false;
     }
   }
@@ -63,8 +93,13 @@ class NodeRemoteDataSource {
       if (result != null) {
         return NodeStatusModel.fromPlatform(result);
       }
+      AppLogger.log('node.status returned null map');
       return const NodeStatusModel(state: 'inactive');
-    } on PlatformException {
+    } on PlatformException catch (e) {
+      AppLogger.log('node.status platform_error code=${e.code} message=${e.message ?? ""}');
+      return const NodeStatusModel(state: 'error', errorMessage: 'Ошибка нативного сервиса');
+    } catch (e) {
+      AppLogger.log('node.status error=$e');
       return const NodeStatusModel(state: 'error', errorMessage: 'Ошибка нативного сервиса');
     }
   }
@@ -73,10 +108,15 @@ class NodeRemoteDataSource {
     _subscription = _eventChannel.receiveBroadcastStream().listen(
       (event) {
         if (event is Map) {
+          final nativeLog = (event['nativeLog'] as String?)?.trim();
+          if (nativeLog != null && nativeLog.isNotEmpty) {
+            AppLogger.log('native: $nativeLog');
+          }
           _statusController.add(NodeStatusModel.fromPlatform(event));
         }
       },
       onError: (error) {
+        AppLogger.log('node.event stream_error=$error');
         _statusController.add(
           NodeStatusModel(state: 'error', errorMessage: error.toString()),
         );

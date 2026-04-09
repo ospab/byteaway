@@ -152,4 +152,25 @@ class AppTheme {
           }),
         ),
       );
+
+  // ── Glassmorphism ──────────────────────────────────────
+  static BoxShadow get glassShadow => BoxShadow(
+        color: Colors.black.withOpacity(0.2),
+        blurRadius: 10,
+        offset: const Offset(0, 4),
+      );
+
+  static Border get glassBorder => Border.all(
+        color: Colors.white.withOpacity(0.08),
+        width: 1.0,
+      );
+
+  static LinearGradient get glassGradient => LinearGradient(
+        colors: [
+          Colors.white.withOpacity(0.12),
+          Colors.white.withOpacity(0.04),
+        ],
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+      );
 }

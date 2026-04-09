@@ -1,4 +1,3 @@
-import '../entities/vpn_status.dart';
 import '../repositories/vpn_repository.dart';
 
 /// Start sing-box VPN tunnel.

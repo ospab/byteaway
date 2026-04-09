@@ -470,6 +470,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "futures-util",
+ "getrandom 0.2.17",
  "serde",
  "serde_json",
  "thiserror",
@@ -1499,3 +1500,8 @@ name = "zmij"
 version = "1.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
+
+[[patch.unused]]
+name = "getrandom"
+version = "0.2.15"
+source = "git+https://github.com/rust-random/getrandom?rev=v0.2.15#cf65e83f9df8954df101320de86f80dccfc6b68a"
