@@ -10,8 +10,6 @@ CREATE TABLE IF NOT EXISTS clients (
 CREATE TABLE IF NOT EXISTS api_keys (
     key_hash VARCHAR(255) PRIMARY KEY,
     client_id UUID REFERENCES clients(id) ON DELETE CASCADE,
-    credential_id UUID NOT NULL,
-    label VARCHAR(255),
     rate_limit_req_sec INT DEFAULT 10,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );

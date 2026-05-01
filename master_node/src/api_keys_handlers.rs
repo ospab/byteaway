@@ -168,8 +168,12 @@ pub async fn api_key_auth(
                 }
             }
 
+            // Добавляем key_info в extensions для использования в обработчиках
+            let mut request = request.into_parts().0;
+            request.extensions_mut().insert(key_info);
+            
             // Продолжаем выполнение запроса
-            Ok(next.run(request).await)
+            Ok(next.run(axum::Request::from(request)).await)
         }
         Ok(None) => Err(StatusCode::UNAUTHORIZED),
         Err(_) => Err(StatusCode::INTERNAL_SERVER_ERROR),
@@ -193,32 +197,30 @@ async fn get_active_sessions_count(
 
 /// Публичный эндпоинт для проверки баланса (доступен по API ключу)
 pub async fn public_get_balance(
-    State(manager): State<Arc<ApiKeyManager>>,
-    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::ConnectInfo(_addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Extension(key_info): axum::extract::Extension<crate::api_keys::ApiKey>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Этот эндпоинт использует middleware api_key_auth
-    // Здесь мы просто возвращаем баланс из контекста запроса
-    // TODO: Получить key_info из middleware
-    
     Ok(Json(serde_json::json!({
-        "balance_usd": 25.50,
-        "vpn_days_remaining": 30,
-        "total_traffic_gb": 150.25
+        "balance_usd": key_info.balance_usd,
+        "traffic_limit_gb": key_info.traffic_limit_gb,
+        "traffic_used_gb": key_info.traffic_used_gb,
+        "traffic_remaining_gb": key_info.traffic_limit_gb - key_info.traffic_used_gb
     })))
 }
 
 /// Публичный эндпоинт для получения статистики (доступен по API ключу)
 pub async fn public_get_stats(
-    State(manager): State<Arc<ApiKeyManager>>,
-    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::ConnectInfo(_addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    axum::extract::Extension(key_info): axum::extract::Extension<crate::api_keys::ApiKey>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // TODO: Получить key_info из middleware
-    
     Ok(Json(serde_json::json!({
-        "shared_traffic_gb": 2.5,
-        "current_speed_mbps": 5.2,
-        "active_sessions": 3,
-        "uptime_seconds": 3600
+        "key_id": key_info.key_id,
+        "tier": key_info.tier,
+        "traffic_limit_gb": key_info.traffic_limit_gb,
+        "traffic_used_gb": key_info.traffic_used_gb,
+        "max_sessions": key_info.max_sessions,
+        "is_active": key_info.is_active,
+        "last_used_at": key_info.last_used_at
     })))
 }
 

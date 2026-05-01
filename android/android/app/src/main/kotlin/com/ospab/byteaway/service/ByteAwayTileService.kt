@@ -5,6 +5,8 @@ import android.os.Build
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import androidx.annotation.RequiresApi
+import com.ospab.byteaway.service.ByteAwayForegroundService
+import com.ospab.byteaway.service.ServiceBridge
 
 @RequiresApi(Build.VERSION_CODES.N)
 class ByteAwayTileService : TileService() {
@@ -16,8 +18,8 @@ class ByteAwayTileService : TileService() {
 
     private fun updateTile() {
         val isCurrentlyRunning = ByteAwayForegroundService.isVpnRunning.get() || 
-                                 ByteAwayForegroundService.isVpnConnecting.get()
-        
+            ByteAwayForegroundService.isVpnConnecting.get()
+
         val tile = qsTile ?: return
         tile.state = if (isCurrentlyRunning) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.updateTile()
@@ -26,8 +28,8 @@ class ByteAwayTileService : TileService() {
     override fun onClick() {
         super.onClick()
         val isCurrentlyRunning = ByteAwayForegroundService.isVpnRunning.get() || 
-                                 ByteAwayForegroundService.isVpnConnecting.get()
-        
+            ByteAwayForegroundService.isVpnConnecting.get()
+
         val intent = Intent(this, ByteAwayForegroundService::class.java).apply {
             action = if (isCurrentlyRunning) {
                 ByteAwayForegroundService.ACTION_STOP_VPN
@@ -35,13 +37,13 @@ class ByteAwayTileService : TileService() {
                 ByteAwayForegroundService.ACTION_TOGGLE_VPN
             }
         }
-        
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent)
         } else {
             startService(intent)
         }
-        
+
         // Brief delay to allow state to start changing
         updateTile()
     }

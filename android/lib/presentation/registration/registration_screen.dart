@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:get_it/get_it.dart';
+import '../../app/di.dart';
 import '../../presentation/theme/app_theme.dart';
 import 'registration_cubit.dart';
 import 'registration_state.dart';
@@ -11,7 +13,7 @@ class RegistrationScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => RegistrationCubit(),
+      create: (_) => sl<RegistrationCubit>(),
       child: const _RegistrationView(),
     );
   }
@@ -41,9 +43,12 @@ class _RegistrationViewState extends State<_RegistrationView> {
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
-          child: Form(
-            key: _formKey,
-            child: Column(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 640),
+              child: Form(
+                key: _formKey,
+                child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 const SizedBox(height: 40),
@@ -157,6 +162,8 @@ class _RegistrationViewState extends State<_RegistrationView> {
                   ],
                 ),
               ],
+            ),
+              ),
             ),
           ),
         ),

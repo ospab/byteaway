@@ -1,0 +1,10 @@
+[ostp]
+server_addr = "127.0.0.1:8443"
+local_bind_addr = "0.0.0.0:0"
+access_key = "replace-with-server-key"
+handshake_timeout_ms = 10000
+io_timeout_ms = 2500
+
+[local_proxy]
+bind_addr = "127.0.0.1:1088"
+connect_timeout_ms = 15000

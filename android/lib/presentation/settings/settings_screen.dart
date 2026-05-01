@@ -2,13 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import '../../core/services/app_update_service.dart';
 import '../theme/app_theme.dart';
 import '../widgets/glass_scaffold.dart';
 import 'settings_cubit.dart';
 import 'settings_state.dart';
 
-/// Settings screen: speed limit, WiFi-only, Kill Switch.
+/// Settings screen: speed limit, WiFi-only, updates, and hidden controls.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
 
@@ -19,16 +20,27 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   int _versionTapCount = 0;
   bool _hiddenSettingsUnlocked = false;
+  static const _vpnProtocols = ['vless', 'ostp'];
+  static const _nodeTransports = ['quic', 'ws'];
 
   @override
   Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    final isNarrow = width < 380;
+    
     return GlassScaffold(
       title: 'Настройки',
       body: BlocBuilder<SettingsCubit, SettingsState>(
         builder: (context, state) {
           return ListView(
-            padding: const EdgeInsets.fromLTRB(20, 100, 20, 20),
+            padding: const EdgeInsets.fromLTRB(0, 100, 0, 20),
             children: [
+              Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 960),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: isNarrow ? 14 : 20),
+                    child: Column(children: [
               // ── Section: Sharing ─────────────────
               _buildSectionHeader(context, 'Шаринг трафика'),
               const SizedBox(height: 12),
@@ -63,17 +75,19 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
               const SizedBox(height: 12),
 
+              // WiFi-only toggle
               _buildGlassCard(
                 context,
                 child: Row(
                   children: [
                     const Icon(Icons.wifi_rounded, color: AppTheme.success, size: 20),
                     const SizedBox(width: 12),
-                    const Expanded(
+                    Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
+                        children: const [
                           Text('Только WiFi', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+                          SizedBox(height: 4),
                           Text('Раздача только по WiFi', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                         ],
                       ),
@@ -86,34 +100,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
               ),
 
-              const SizedBox(height: 32),
-
-              // ── Section: Security ────────────────
-              _buildSectionHeader(context, 'Безопасность'),
               const SizedBox(height: 12),
 
+              // Split-Tunnel navigation
               _buildGlassCard(
                 context,
-                child: Row(
-                  children: [
-                    const Icon(Icons.security_rounded, color: AppTheme.error, size: 20),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Kill Switch', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
-                          Text('Блокировка при обрыве VPN', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
-                        ],
-                      ),
-                    ),
-                    Switch(
-                      value: state.killSwitch,
-                      onChanged: (v) => context.read<SettingsCubit>().toggleKillSwitch(v),
-                    ),
-                  ],
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(Icons.tune_rounded, color: AppTheme.primary, size: 20),
+                  title: const Text('Split-Tunnel', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+                  subtitle: const Text('Выбор приложений для обхода/прокси', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                  trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white54),
+                  onTap: () => context.push('/split-tunnel'),
                 ),
               ),
+
+
 
               const SizedBox(height: 32),
 
@@ -126,7 +128,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 child: Column(
                   children: [
                     FutureBuilder<String>(
-                      future: AppUpdateService.getDisplayVersion(),
+                      future: _getBuildVersion(),
                       builder: (context, snapshot) {
                         final version = snapshot.data ?? '...';
                         return GestureDetector(
@@ -136,125 +138,84 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         );
                       },
                     ),
-                    if (_hiddenSettingsUnlocked) ...[
-                      const Divider(color: Colors.white10, height: 24),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.tune_rounded, color: AppTheme.primary, size: 20),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Скрытые настройки транспорта',
-                                  style: TextStyle(
-                                    color: AppTheme.textPrimary,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                const Text(
-                                  'Для РФ: WS идет внутри локального VPN-туннеля (Xray SOCKS).',
-                                  style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                                ),
-                                const SizedBox(height: 10),
-                                DropdownButtonHideUnderline(
-                                  child: DropdownButton<String>(
-                                    value: state.nodeTransportMode,
-                                    dropdownColor: const Color(0xFF171A21),
-                                    style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-                                    iconEnabledColor: AppTheme.primary,
-                                items: const [
-                                      DropdownMenuItem(value: 'quic', child: Text('QUIC (прямой, быстрый)')),
-                                      DropdownMenuItem(value: 'ws', child: Text('WS через VPN-туннель (для РФ ✓)')),
-                                      DropdownMenuItem(value: 'hy2', child: Text('HY2 relay + SOCKS')),
-                                    ],
-                                    onChanged: (value) {
-                                      if (value == null) return;
-                                      context.read<SettingsCubit>().setNodeTransportMode(value);
-                                    },
-                                  ),
-                                ),
-                                const SizedBox(height: 10),
-                                Row(
-                                  children: [
-                                    const Text(
-                                      'VPN MTU',
-                                      style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                                    ),
-                                    const Spacer(),
-                                    DropdownButtonHideUnderline(
-                                      child: DropdownButton<int>(
-                                        value: state.vpnMtu,
-                                        dropdownColor: const Color(0xFF171A21),
-                                        style: const TextStyle(color: AppTheme.textPrimary, fontSize: 14),
-                                        iconEnabledColor: AppTheme.primary,
-                                        items: const [
-                                          DropdownMenuItem(value: 1280, child: Text('1280 (safe)')),
-                                          DropdownMenuItem(value: 1380, child: Text('1380')),
-                                          DropdownMenuItem(value: 1480, child: Text('1480')),
-                                        ],
-                                        onChanged: (value) {
-                                          if (value == null) return;
-                                          context.read<SettingsCubit>().setVpnMtu(value);
-                                        },
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
                     const Divider(color: Colors.white10, height: 24),
                     ListTile(
                       contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.system_update_alt_rounded,
-                          color: AppTheme.accent),
-                      title: const Text('Проверить обновление',
-                          style: TextStyle(
-                              color: AppTheme.textPrimary, fontSize: 15)),
-                      trailing:
-                          const Icon(Icons.chevron_right, color: Colors.white24),
+                      leading: const Icon(Icons.system_update_rounded, color: AppTheme.primary, size: 20),
+                      title: const Text('Проверить обновления', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+                      subtitle: const Text('Скачивание и установка APK', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
                       onTap: () => _checkForUpdates(context),
                     ),
-                    const Divider(color: Colors.white10, height: 24),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.telegram_rounded, color: AppTheme.primary),
-                      title: const Text('Прокси для Telegram', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15)),
-                      subtitle: const Text(
-                        'Ссылка: https://t.me/socks?server=127.0.0.1&port=10808',
-                        style: TextStyle(color: AppTheme.textSecondary, fontSize: 12),
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          TextButton(
-                            onPressed: () => _copyTelegramProxyLink(context),
-                            child: const Text('Ссылка'),
-                          ),
-                          TextButton(
-                            onPressed: () => _copyTelegramProxy(context),
-                            child: const Text('Данные'),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(color: Colors.white10, height: 24),
-                    ListTile(
-                      contentPadding: EdgeInsets.zero,
-                      leading: const Icon(Icons.description_outlined, color: AppTheme.primary),
-                      title: const Text('Журнал событий (Logs)', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15)),
-                      trailing: const Icon(Icons.chevron_right, color: Colors.white24),
-                      onTap: () => context.push('/logs'),
-                    ),
                   ],
+                ),
+              ),
+
+              if (_hiddenSettingsUnlocked) ...[
+                const SizedBox(height: 32),
+                _buildSectionHeader(context, 'Скрытые настройки'),
+                const SizedBox(height: 12),
+                _buildGlassCard(
+                  context,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      DropdownButtonFormField<String>(
+                        value: _nodeTransports.contains(state.nodeTransportMode)
+                            ? state.nodeTransportMode
+                            : _nodeTransports.first,
+                        dropdownColor: const Color(0xFF171A21),
+                        decoration: const InputDecoration(
+                          labelText: 'Транспорт узла',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _nodeTransports
+                            .map((mode) => DropdownMenuItem(
+                                  value: mode,
+                                  child: Text(mode.toUpperCase()),
+                                ))
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          context.read<SettingsCubit>().setNodeTransportMode(value);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<String>(
+                        value: _vpnProtocols.contains(state.vpnProtocol)
+                            ? state.vpnProtocol
+                            : _vpnProtocols.first,
+                        dropdownColor: const Color(0xFF171A21),
+                        decoration: const InputDecoration(
+                          labelText: 'Протокол VPN',
+                          labelStyle: TextStyle(color: Colors.white70),
+                          border: OutlineInputBorder(),
+                        ),
+                        items: _vpnProtocols
+                            .map((protocol) => DropdownMenuItem(
+                                  value: protocol,
+                                  child: Text(protocol.toUpperCase()),
+                                ))
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          context.read<SettingsCubit>().setVpnProtocol(value);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: const Icon(Icons.article_rounded, color: AppTheme.primary, size: 20),
+                        title: const Text('Логи приложения', style: TextStyle(color: AppTheme.textPrimary, fontSize: 15, fontWeight: FontWeight.w600)),
+                        subtitle: const Text('Новые строки добавляются снизу', style: TextStyle(color: AppTheme.textSecondary, fontSize: 12)),
+                        onTap: () => context.push('/logs'),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+                    ]),
+                  ),
                 ),
               ),
             ],
@@ -271,40 +232,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       setState(() {
         _hiddenSettingsUnlocked = true;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Скрытые настройки разблокированы')),
-      );
       return;
     }
-
-    final tapsLeft = 5 - _versionTapCount;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('До скрытых настроек: $tapsLeft')),
-    );
   }
 
-  Future<void> _copyTelegramProxy(BuildContext context) async {
-    const host = '127.0.0.1';
-    const port = 10808;
-    const user = 'none';
-    const pass = 'none';
-    const payload = 'SOCKS5\nHost: $host\nPort: $port\nUsername: $user\nPassword: $pass\n\n'
-        'Важно: локальный прокси доступен, когда запущен ByteAway сервис (VPN или Node).';
-
-    await Clipboard.setData(const ClipboardData(text: payload));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Параметры прокси Telegram скопированы')),
-    );
-  }
-
-  Future<void> _copyTelegramProxyLink(BuildContext context) async {
-    const link = 'https://t.me/socks?server=127.0.0.1&port=10808';
-    await Clipboard.setData(const ClipboardData(text: link));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Ссылка Telegram прокси скопирована')),
-    );
+  Future<String> _getBuildVersion() async {
+    final package = await PackageInfo.fromPlatform();
+    final build = package.buildNumber.trim();
+    return '0.0.${build.isEmpty ? '0' : build}';
   }
 
   Widget _buildSectionHeader(BuildContext context, String title) {
@@ -349,6 +284,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       }
     }
 
+    if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Проверяем обновления...')),
     );
@@ -403,6 +339,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
       if (!shouldInstall) return;
 
+      if (!context.mounted) return;
       await _downloadAndInstallWithProgress(context, update);
     } catch (e) {
       if (!context.mounted) return;

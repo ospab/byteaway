@@ -1,3 +1,4 @@
+use crate::node_manager::registry::NodeRegistry;
 use crate::error::AppError;
 use crate::state::AppState;
 use crate::node_manager::registry::WsCommand;
@@ -30,10 +31,10 @@ pub async fn route_stream(
     );
 
     // Канал для получения данных ОТ мобильной ноды
-    let (reply_tx, mut reply_rx) = mpsc::channel::<Vec<u8>>(1024);
+    let (reply_tx, mut reply_rx) = mpsc::channel::<Vec<u8>>(128);
 
     // Получаем mpsc::Sender<WsCommand> для нужной ноды
-    let entry = state.registry.active_connections
+    let entry = NodeRegistry::active_connections(&*state.registry)
         .get(&node_id)
         .ok_or(AppError::NodeOffline)?;
 
@@ -43,13 +44,12 @@ pub async fn route_stream(
     drop(entry);
 
     // 1. Отправляем команду OPEN в WS-хендлер
-    node_tx.send(WsCommand::Open {
+    let send_result: Result<(), mpsc::error::SendError<WsCommand>> = node_tx.send(WsCommand::Open {
         session_id,
         target_addr: target_addr.to_string(),
         reply_tx,
-    })
-    .await
-    .map_err(|_| AppError::NodeOffline)?;
+    }).await;
+    send_result.map_err(|_| AppError::NodeOffline)?;
 
     // 2. Двунаправленный relay: TCP ↔ WS
     let (mut tcp_reader, mut tcp_writer) = client_stream.into_split();
@@ -61,7 +61,7 @@ pub async fn route_stream(
     // TCP → WS (upload: данные от SOCKS5 клиента к мобильной ноде)
     let state_up = state.clone();
     let mut upload = tokio::spawn(async move {
-        let mut buf = vec![0u8; 65536];
+        let mut buf = vec![0u8; 16384];
         let mut total = 0u64;
         let mut interim = 0u64;
 
@@ -69,35 +69,52 @@ pub async fn route_stream(
         if !initial_data.is_empty() {
             total += initial_data.len() as u64;
             interim += initial_data.len() as u64;
-            if node_tx_data.send(WsCommand::Data {
+            let send_result: Result<(), mpsc::error::SendError<WsCommand>> = node_tx_data.send(WsCommand::Data {
                 session_id: sid,
                 payload: initial_data,
-            }).await.is_err() {
+            }).await;
+            if send_result.is_err() {
                 return 0;
             }
         }
 
         loop {
             let n = match tcp_reader.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
+                Ok(0) => {
+                    info!("[{}] TCP read closed (EOF), total={}B", &sid.to_string()[..8], total);
+                    break;
+                }
                 Ok(n) => n,
+                Err(e) => {
+                    info!("[{}] TCP read error: {:?}, total={}B", &sid.to_string()[..8], e, total);
+                    break;
+                }
             };
             total += n as u64;
             interim += n as u64;
 
-            // Interim billing every 1MB
+            // Interim billing every 1MB (spawn to avoid blocking relay)
             if interim >= 1_048_576 {
-                let _ = state_up.billing_engine.commit_usage(client_id, node_id, interim).await;
+                let state_clone = state_up.clone();
+                let client_id_clone = client_id;
+                let node_id_clone = node_id;
+                let interim_val = interim;
+                tokio::spawn(async move {
+                    let _ = state_clone.billing_engine.commit_usage(client_id_clone, node_id_clone, interim_val).await;
+                });
                 interim = 0;
             }
 
 
-            if node_tx_data.send(WsCommand::Data {
+            let send_result: Result<(), mpsc::error::SendError<WsCommand>> = node_tx_data.send(WsCommand::Data {
                 session_id: sid,
                 payload: buf[..n].to_vec(),
-            }).await.is_err() {
+            }).await;
+            if send_result.is_err() {
+                warn!("[{}] WS send failed, breaking", &sid.to_string()[..8]);
                 break;
             }
+            info!("[{}] → sent {} bytes to node", &sid.to_string()[..8], n);
         }
         // Commit remaining
         if interim > 0 {
@@ -114,6 +131,7 @@ pub async fn route_stream(
         while let Some(data) = reply_rx.recv().await {
             total += data.len() as u64;
             interim += data.len() as u64;
+            info!("[{}] ← received {} bytes from node, total={}B", &sid.to_string()[..8], data.len(), total);
 
             // Interim billing every 1MB
             if interim >= 1_048_576 {
@@ -122,9 +140,13 @@ pub async fn route_stream(
             }
 
             if tcp_writer.write_all(&data).await.is_err() {
+                warn!("[{}] TCP write failed, breaking", &sid.to_string()[..8]);
                 break;
             }
+            tcp_writer.flush().await.ok();
+            info!("[{}] → wrote {} bytes to client", &sid.to_string()[..8], data.len());
         }
+        info!("[{}] Download loop ended, total={}B", &sid.to_string()[..8], total);
         // Commit remaining
         if interim > 0 {
             let _ = state_down.billing_engine.commit_usage(client_id, node_id, interim).await;
@@ -133,83 +155,40 @@ pub async fn route_stream(
     });
 
 
-    // Keep both directions alive long enough for response bodies.
-    // If upload finishes first (common for HTTP GET), we still wait for download.
-    // If download finishes first, we can abort upload.
     let (upload_bytes, download_bytes) = tokio::select! {
         up = &mut upload => {
             let up_bytes = up.unwrap_or(0);
-            let down_bytes = match tokio::time::timeout(std::time::Duration::from_secs(120), &mut download).await {
+            
+            // Client disconnected. Tell the node to close its end IMMEDIATELY
+            // to avoid hanging the session for 120s.
+            let _ = node_tx.send(WsCommand::Close { session_id }).await;
+            
+            // Still give a short window for any remaining data from the node (e.g. final HTTP body bytes)
+            let down_bytes = match tokio::time::timeout(std::time::Duration::from_secs(5), &mut download).await {
                 Ok(v) => v.unwrap_or(0),
                 Err(_) => {
-                    warn!(
-                        "route_stream download timeout after upload sid={} client={} node={} waited=120s up={}B",
-                        session_id,
-                        client_id,
-                        node_id,
-                        up_bytes
-                    );
                     download.abort();
+                    let _ = download.await;
                     0
                 }
             };
-            info!(
-                "route_stream upload completed sid={} client={} node={} up={}B down={}B",
-                session_id,
-                client_id,
-                node_id,
-                up_bytes,
-                down_bytes
-            );
             (up_bytes, down_bytes)
         }
         down = &mut download => {
             let down_bytes = down.unwrap_or(0);
-            info!(
-                "route_stream download completed sid={} client={} node={} down={}B",
-                session_id,
-                client_id,
-                node_id,
-                down_bytes
-            );
-
-            // Do not abort upload immediately: many HTTPS clients may still be
-            // about to send first TLS bytes while downstream already closed.
-            // Give upload a short grace window before force-abort.
-            let up_bytes = match tokio::time::timeout(std::time::Duration::from_secs(20), &mut upload).await {
-                Ok(v) => v.unwrap_or(0),
-                Err(_) => {
-                    warn!(
-                        "route_stream upload grace timeout after download sid={} client={} node={} waited=20s down={}B",
-                        session_id,
-                        client_id,
-                        node_id,
-                        down_bytes
-                    );
-                    upload.abort();
-                    let _ = upload.await;
-                    0
-                }
-            };
-
-            info!(
-                "route_stream upload finalized after download sid={} client={} node={} up={}B",
-                session_id,
-                client_id,
-                node_id,
-                up_bytes
-            );
-            (up_bytes, down_bytes)
+            // Node disconnected or closed the session.
+            upload.abort();
+            let _ = upload.await;
+            (0, down_bytes)
         }
     };
 
     let total_bytes = upload_bytes + download_bytes;
 
-    // 3. Закрываем сессию
+    // 3. Final cleanup ensure (idempotent)
     let _ = node_tx.send(WsCommand::Close { session_id }).await;
 
-    // Декрементируем счётчик сессий
-    if let Some(entry) = state.registry.active_connections.get(&node_id) {
+    if let Some(entry) = NodeRegistry::active_connections(&*state.registry).get(&node_id) {
         entry.active_sessions.fetch_sub(1, Ordering::Relaxed);
     }
 

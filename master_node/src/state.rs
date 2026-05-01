@@ -15,9 +15,11 @@ pub struct AppState {
     pub authenticator: Authenticator,
     pub billing_engine: Arc<dyn BillingEngine>,
     pub price_per_gb_usd: f64,
+    pub auto_add_balance_usd: f64,  // Автоматически добавлять баланс при создании токена
     pub socks5_port: u16,
     pub vpn_public_host: String,
     pub vpn_port: u16,
+    #[allow(dead_code)]
     pub reality_dest: String,
     #[allow(dead_code)]
     pub reality_private_key: String,
@@ -29,4 +31,5 @@ pub struct AppState {
     pub turnstile_verify_url: String,
     pub app_update_manifest_path: String,
     pub public_base_url: String,
+    pub admin_api_key: String,
 }

@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod app_update;
 pub mod business;
 pub mod business_auth;

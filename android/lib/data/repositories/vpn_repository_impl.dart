@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 import '../../core/constants.dart';
 import '../../core/logger.dart';
 import '../../core/network/api_client.dart';
-import '../datasources/auth_local_ds.dart';
 import '../../domain/entities/vpn_status.dart';
 import '../../domain/repositories/vpn_repository.dart';
 
@@ -15,31 +14,23 @@ class VpnRepositoryImpl implements VpnRepository {
   final MethodChannel _methodChannel;
   final EventChannel _eventChannel;
   final ApiClient _apiClient;
-  final AuthLocalDataSource _authLocalDs;
   StreamSubscription? _subscription;
   final _statusController = StreamController<VpnStatus>.broadcast();
-  Timer? _statusPollTimer;
-  VpnStatus? _lastEmittedStatus;
 
-  VpnRepositoryImpl(this._apiClient, this._authLocalDs)
+  VpnRepositoryImpl(this._apiClient)
       : _methodChannel = const MethodChannel(AppConstants.serviceChannel),
         _eventChannel = const EventChannel(AppConstants.serviceEventsChannel) {
     _listenToEvents();
-    _startStatusPolling();
   }
 
   @override
   Future<Map<String, dynamic>> getVpnConfig({bool useRuEgress = false}) async {
-    final suffix = useRuEgress ? '?use_ru_egress=1' : '';
-    final response = await _apiClient.get('/api/v1/vpn/config$suffix');
-    // Ensure compatibility if server is not yet updated, but we transition to core_config_json
-    if (response.containsKey('core_config_json')) {
-      return response;
-    } else if (response.containsKey('xray_config_json')) {
-      final map = Map<String, dynamic>.from(response);
-      map['core_config_json'] = map['xray_config_json'];
-      return map;
-    }
+    final response = await _apiClient.get(
+      '/api/v1/vpn/config',
+      queryParameters: {
+        if (useRuEgress) 'use_ru_egress': '1',
+      },
+    );
     return response;
   }
 
@@ -48,14 +39,12 @@ class VpnRepositoryImpl implements VpnRepository {
     try {
       final result = await _methodChannel.invokeMethod<bool>(
         'startVpn',
-        {
-          'config': config,
-          'mtu': _authLocalDs.getVpnMtu(),
-        },
+        {'config': config},
       );
       final success = result ?? false;
       if (success) {
-        _emitStatus(const VpnStatus(state: VpnConnectionState.connecting));
+        _statusController
+            .add(const VpnStatus(state: VpnConnectionState.connected));
       }
       return success;
     } on PlatformException {
@@ -69,7 +58,8 @@ class VpnRepositoryImpl implements VpnRepository {
       final result = await _methodChannel.invokeMethod<bool>('stopVpn');
       final success = result ?? false;
       if (success) {
-        _emitStatus(const VpnStatus(state: VpnConnectionState.disconnected));
+        _statusController
+            .add(const VpnStatus(state: VpnConnectionState.disconnected));
       }
       return success;
     } on PlatformException {
@@ -99,16 +89,14 @@ class VpnRepositoryImpl implements VpnRepository {
   void _listenToEvents() {
     _subscription = _eventChannel.receiveBroadcastStream().listen(
       (event) {
+        AppLogger.log('VPN event from native: $event');
         if (event is Map) {
-          final nativeLog = (event['nativeLog'] as String?)?.trim();
-          if (nativeLog != null && nativeLog.isNotEmpty) {
-            AppLogger.log('native: $nativeLog');
-          }
-          _emitStatus(_mapToVpnStatus(event));
+          _statusController.add(_mapToVpnStatus(event));
         }
       },
       onError: (error) {
-        _emitStatus(VpnStatus(
+        AppLogger.log('VPN event error: $error');
+        _statusController.add(VpnStatus(
           state: VpnConnectionState.error,
           errorMessage: error.toString(),
         ));
@@ -116,45 +104,21 @@ class VpnRepositoryImpl implements VpnRepository {
     );
   }
 
-  void _startStatusPolling() {
-    _statusPollTimer?.cancel();
-    _statusPollTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
-      try {
-        final result = await _methodChannel.invokeMethod<Map>('getStatus');
-        if (result != null) {
-          _emitStatus(_mapToVpnStatus(result));
-        }
-      } catch (_) {}
-    });
-  }
-
-  void _emitStatus(VpnStatus status) {
-    if (_lastEmittedStatus == status) return;
-    _lastEmittedStatus = status;
-    _statusController.add(status);
-  }
-
   VpnStatus _mapToVpnStatus(Map<dynamic, dynamic> map) {
     final connected = map['vpnConnected'] as bool? ?? false;
-    final connecting = map['vpnConnecting'] as bool? ?? false;
     final errorMessage = (map['errorMessage'] as String?)?.trim();
 
-    if (!connected && !connecting && errorMessage != null && errorMessage.isNotEmpty) {
+    if (!connected && errorMessage != null && errorMessage.isNotEmpty) {
       return VpnStatus(
         state: VpnConnectionState.error,
         errorMessage: errorMessage,
       );
     }
 
-    VpnConnectionState state = VpnConnectionState.disconnected;
-    if (connected) {
-      state = VpnConnectionState.connected;
-    } else if (connecting) {
-      state = VpnConnectionState.connecting;
-    }
-
     return VpnStatus(
-      state: state,
+      state: connected
+          ? VpnConnectionState.connected
+          : VpnConnectionState.disconnected,
       serverAddress: map['serverAddress'] as String?,
       uptime: Duration(seconds: map['uptime'] as int? ?? 0),
       bytesIn: map['bytesIn'] as int? ?? 0,
@@ -162,8 +126,25 @@ class VpnRepositoryImpl implements VpnRepository {
     );
   }
 
+  @override
+  Future<bool> connectOstp(String config) async {
+    try {
+      final result = await _methodChannel.invokeMethod<bool>(
+        'startVpn',
+        {'config': config},
+      );
+      final success = result ?? false;
+      if (success) {
+        _statusController
+            .add(const VpnStatus(state: VpnConnectionState.connected));
+      }
+      return success;
+    } on PlatformException {
+      return false;
+    }
+  }
+
   void dispose() {
-    _statusPollTimer?.cancel();
     _subscription?.cancel();
     _statusController.close();
   }

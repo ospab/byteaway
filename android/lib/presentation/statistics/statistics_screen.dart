@@ -53,11 +53,18 @@ class StatisticsScreen extends StatelessWidget {
           }
 
           if (state is StatisticsLoaded) {
+            final width = MediaQuery.of(context).size.width;
+            final isNarrow = width < 380;
             return SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 100, 20, 80),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+              padding: EdgeInsets.fromLTRB(0, 100, 0, 80),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1000),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: isNarrow ? 14 : 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
                   // ── Summary Cards ────────────────────
                   Row(
                     children: [
@@ -121,7 +128,10 @@ class StatisticsScreen extends StatelessWidget {
                   const SizedBox(height: 12),
 
                   ...state.records.reversed.map((record) => _buildDailyRow(record)),
-                ],
+                      ],
+                    ),
+                  ),
+                ),
               ),
             );
           }

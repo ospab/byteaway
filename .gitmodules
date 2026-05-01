@@ -1,0 +1,6 @@
+[submodule "sing-box-for-android"]
+	path = sing-box-for-android
+	url = https://github.com/SagerNet/sing-box-for-android.git
+[submodule "sing-box-fork"]
+	path = sing-box-fork
+	url = https://github.com/SagerNet/sing-box.git

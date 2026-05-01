@@ -1,6 +1,7 @@
+use crate::node_manager::registry::NodeRegistry;
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::node_manager::registry::{NodeRegistry, ConnectionType};
+use crate::node_manager::registry::ConnectionType;
 use redis::AsyncCommands;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -185,7 +186,7 @@ async fn choose_node_for_client(
         let cached_node: Option<String> = conn.get(&sticky_key).await.ok();
         if let Some(raw) = cached_node {
             if let Ok(node_id) = Uuid::parse_str(raw.trim()) {
-                if state.registry.active_connections.contains_key(&node_id) {
+                if NodeRegistry::active_connections(&*state.registry).contains_key(&node_id) {
                     info!(
                         "Node select sticky hit client={} country={} node={}",
                         client_id,
@@ -205,7 +206,7 @@ async fn choose_node_for_client(
     }
 
     // 2) Fallback to normal selection.
-    let node_id = state.registry.find_node(country, conn_type).await?;
+    let node_id = NodeRegistry::find_node(&*state.registry, country, conn_type).await?;
     info!(
         "Node select fresh client={} country={} node={}",
         client_id,
@@ -215,7 +216,7 @@ async fn choose_node_for_client(
 
     // 3) Save sticky assignment with TTL to keep flow stable for multi-request tests.
     if let Ok(mut conn) = state.redis_client.get_multiplexed_async_connection().await {
-        let _: Result<(), _> = conn.set_ex(&sticky_key, node_id.to_string(), 300).await;
+        let _: Result<(), _> = conn.set_ex(&sticky_key, node_id.to_string(), 3600).await;
     }
 
     Ok(node_id)

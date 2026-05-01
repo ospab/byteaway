@@ -2,13 +2,16 @@ import 'package:dio/dio.dart';
 import '../constants.dart';
 import '../errors/exceptions.dart';
 
-/// Dio HTTP client wrapper with Bearer token auth.
+/// Dio HTTP client wrapper with Bearer token auth and retry logic.
 ///
 /// Automatically injects `Authorization: Bearer <token>` into every request.
 /// Maps Dio errors to typed exceptions for repository layer consumption.
 class ApiClient {
   late final Dio _dio;
   String? _token;
+  
+  static const int _maxRetries = 3;
+  static const int _initialDelayMs = 500;
 
   ApiClient({String? token}) : _token = token {
     _dio = Dio(
@@ -48,33 +51,64 @@ class ApiClient {
     _token = null;
   }
 
-  /// Perform a GET request and return decoded JSON.
+  /// Perform a GET request with retry logic.
   Future<Map<String, dynamic>> get(
     String path, {
     Map<String, dynamic>? queryParameters,
   }) async {
-    try {
-      final response = await _dio.get(
-        path,
-        queryParameters: queryParameters,
-      );
-      return response.data as Map<String, dynamic>;
-    } on DioException catch (e) {
-      throw _mapDioError(e);
-    }
+    return _executeWithRetry(() => _dio.get(
+      path,
+      queryParameters: queryParameters,
+    ));
   }
 
-  /// Perform a POST request with optional body.
+  /// Perform a POST request with retry logic.
   Future<Map<String, dynamic>> post(
     String path, {
     Map<String, dynamic>? data,
   }) async {
-    try {
-      final response = await _dio.post(path, data: data);
-      return response.data as Map<String, dynamic>;
-    } on DioException catch (e) {
-      throw _mapDioError(e);
+    return _executeWithRetry(() => _dio.post(path, data: data));
+  }
+
+  Future<Map<String, dynamic>> _executeWithRetry(
+    Future<Response> Function() request,
+  ) async {
+    int attempts = 0;
+    int delayMs = _initialDelayMs;
+
+    while (true) {
+      try {
+        final response = await request();
+        return response.data as Map<String, dynamic>;
+      } on DioException catch (e) {
+        // Retry only on network errors or 5xx server errors
+        final shouldRetry = _shouldRetry(e);
+        
+        if (!shouldRetry || attempts >= _maxRetries) {
+          throw _mapDioError(e);
+        }
+
+        attempts++;
+        await Future.delayed(Duration(milliseconds: delayMs));
+        delayMs *= 2; // Exponential backoff
+      }
     }
+  }
+
+  bool _shouldRetry(DioException e) {
+    // Retry on connection errors
+    if (e.type == DioExceptionType.connectionTimeout ||
+        e.type == DioExceptionType.sendTimeout ||
+        e.type == DioExceptionType.receiveTimeout ||
+        e.type == DioExceptionType.connectionError) {
+      return true;
+    }
+    // Retry on server errors (5xx)
+    final statusCode = e.response?.statusCode;
+    if (statusCode != null && statusCode >= 500 && statusCode < 600) {
+      return true;
+    }
+    return false;
   }
 
   /// Maps [DioException] to domain exceptions.

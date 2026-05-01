@@ -23,6 +23,8 @@ pub fn build_router(state: Arc<AppState>, tunnel_state: Arc<TunnelState>) -> Rou
 
     // Публичные эндпоинты аутентификации
     let auth_routes = Router::new()
+        .route("/register", post(handlers::register_client))
+        .route("/login", post(handlers::login_client))
         .route("/register-node", post(handlers::register_node))
         .route("/business/register", post(business_auth::register_business))
         .route("/business/login", post(business_auth::login_business))
@@ -56,6 +58,7 @@ pub fn build_router(state: Arc<AppState>, tunnel_state: Arc<TunnelState>) -> Rou
         // B2B proxy credentials management
         .route("/business/proxy-credentials", post(business::create_proxy_credentials))
         .route("/business/proxy-credentials", get(business::list_proxy_credentials))
+        .route("/business/report-error", post(business::report_business_error))
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
 

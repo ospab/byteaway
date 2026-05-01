@@ -13,6 +13,17 @@ class ConnectVpnUseCase {
   }
 }
 
+/// Start OSTP VPN tunnel.
+class ConnectVpnOstpUseCase {
+  final VpnRepository _repository;
+
+  const ConnectVpnOstpUseCase(this._repository);
+
+  Future<bool> call(String config) {
+    return _repository.connectOstp(config);
+  }
+}
+
 /// Stop sing-box VPN tunnel.
 class DisconnectVpnUseCase {
   final VpnRepository _repository;

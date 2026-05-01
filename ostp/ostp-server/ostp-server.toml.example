@@ -1,0 +1,7 @@
+bind_addr = "0.0.0.0:8443"
+static_noise_key_hex = "0202020202020202020202020202020202020202020202020202020202020202"
+stream_id = 1
+max_padding = 256
+access_keys_file = "ostp-server-keys.txt"
+max_datagram_size = 2048
+peer_idle_timeout_secs = 120

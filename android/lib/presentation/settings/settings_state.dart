@@ -8,6 +8,8 @@ class SettingsState extends Equatable {
   final bool killSwitch;
   final String nodeTransportMode;
   final int vpnMtu;
+  final bool showVpnButton;
+  final String vpnProtocol;
 
   const SettingsState({
     this.speedLimitMbps = 50,
@@ -16,6 +18,8 @@ class SettingsState extends Equatable {
     this.killSwitch = false,
     this.nodeTransportMode = 'quic',
     this.vpnMtu = 1280,
+    this.showVpnButton = false,
+    this.vpnProtocol = 'vless',
   });
 
   SettingsState copyWith({
@@ -25,6 +29,8 @@ class SettingsState extends Equatable {
     bool? killSwitch,
     String? nodeTransportMode,
     int? vpnMtu,
+    bool? showVpnButton,
+    String? vpnProtocol,
   }) {
     return SettingsState(
       speedLimitMbps: speedLimitMbps ?? this.speedLimitMbps,
@@ -33,9 +39,20 @@ class SettingsState extends Equatable {
       killSwitch: killSwitch ?? this.killSwitch,
       nodeTransportMode: nodeTransportMode ?? this.nodeTransportMode,
       vpnMtu: vpnMtu ?? this.vpnMtu,
+      showVpnButton: showVpnButton ?? this.showVpnButton,
+      vpnProtocol: vpnProtocol ?? this.vpnProtocol,
     );
   }
 
   @override
-  List<Object?> get props => [speedLimitMbps, wifiOnly, allowMobileData, killSwitch, nodeTransportMode, vpnMtu];
+  List<Object?> get props => [
+        speedLimitMbps,
+        wifiOnly,
+        allowMobileData,
+        killSwitch,
+        nodeTransportMode,
+        vpnMtu,
+        showVpnButton,
+        vpnProtocol
+      ];
 }

@@ -16,4 +16,7 @@ abstract class VpnRepository {
 
   /// Stream of VPN status changes from EventChannel.
   Stream<VpnStatus> get statusStream;
+
+  /// Connect VPN using OSTP. [config] is the OSTP JSON config.
+  Future<bool> connectOstp(String config);
 }

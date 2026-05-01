@@ -54,22 +54,34 @@ object DeviceInfoChannel {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return false
 
         return try {
+            // First try to open the app-specific battery optimization page
             val packageUri = Uri.parse("package:${context.packageName}")
-            val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
                 data = packageUri
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            context.startActivity(requestIntent)
+            context.startActivity(intent)
             true
         } catch (_: Throwable) {
             try {
+                // Fallback: open general battery optimization settings
                 val fallbackIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
                 context.startActivity(fallbackIntent)
                 true
             } catch (_: Throwable) {
-                false
+                try {
+                    // Last resort: open app settings
+                    val appIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(appIntent)
+                    true
+                } catch (_: Throwable) {
+                    false
+                }
             }
         }
     }

@@ -53,7 +53,8 @@ class AuthLocalDataSource {
 
   /// Get VPN MTU setting.
   int getVpnMtu() {
-    final value = _prefs.getInt(AppConstants.vpnMtuKey) ?? AppConstants.defaultVpnMtu;
+    final value =
+        _prefs.getInt(AppConstants.vpnMtuKey) ?? AppConstants.defaultVpnMtu;
     return value.clamp(AppConstants.minVpnMtu, AppConstants.maxVpnMtu);
   }
 
@@ -63,22 +64,21 @@ class AuthLocalDataSource {
     await _prefs.setInt(AppConstants.vpnMtuKey, safe);
   }
 
-  /// Get hidden node transport mode (quic/ws/hy2).
+  /// Get hidden node transport mode (quic/ws).
   String getNodeTransportMode() {
     final mode = _prefs.getString(AppConstants.nodeTransportModeKey) ?? 'quic';
     final normalized = mode.trim().toLowerCase();
-    if (normalized == 'ws' || normalized == 'hy2' || normalized == 'quic') {
+    if (normalized == 'ws' || normalized == 'quic') {
       return normalized;
     }
     return 'quic';
   }
 
-  /// Save hidden node transport mode (quic/ws/hy2).
+  /// Save hidden node transport mode (quic/ws).
   Future<void> setNodeTransportMode(String mode) async {
     final normalized = mode.trim().toLowerCase();
-    final safe = (normalized == 'ws' || normalized == 'hy2' || normalized == 'quic')
-        ? normalized
-        : 'quic';
+    final safe =
+        (normalized == 'ws' || normalized == 'quic') ? normalized : 'quic';
     await _prefs.setString(AppConstants.nodeTransportModeKey, safe);
   }
 
@@ -110,5 +110,25 @@ class AuthLocalDataSource {
   /// Save Kill Switch setting.
   Future<void> setKillSwitch(bool killSwitch) async {
     await _prefs.setBool(AppConstants.killSwitchKey, killSwitch);
+  }
+
+  /// Get debug flag: show VPN button on home screen.
+  bool getShowVpnButton() {
+    return _prefs.getBool(AppConstants.showVpnButtonKey) ?? true;
+  }
+
+  /// Save debug flag: show VPN button on home screen.
+  Future<void> setShowVpnButton(bool show) async {
+    await _prefs.setBool(AppConstants.showVpnButtonKey, show);
+  }
+
+  /// Get VPN protocol preference.
+  String getVpnProtocol() {
+    return _prefs.getString(AppConstants.vpnProtocolKey) ?? 'vless';
+  }
+
+  /// Save VPN protocol preference.
+  Future<void> setVpnProtocol(String protocol) async {
+    await _prefs.setString(AppConstants.vpnProtocolKey, protocol);
   }
 }

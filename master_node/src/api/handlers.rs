@@ -2,22 +2,11 @@ use axum::{extract::{State, Query}, Extension, Json};
 use crate::auth::AuthContext;
 use crate::error::AppError;
 use crate::state::AppState;
-use chrono::{Duration, Utc};
 use redis::AsyncCommands;
 use serde::{Serialize, Deserialize};
-use sha2::{Digest, Sha256};
 use sqlx::Row;
 use std::sync::Arc;
 use tracing::info;
-
-const FREE_DAILY_LIMIT_BYTES: i64 = 1_073_741_824;
-
-fn is_paid_tier(balance: f64, reward_unlimited_until: Option<chrono::DateTime<Utc>>, node_active: bool) -> bool {
-    let has_reward_unlimited = reward_unlimited_until
-        .map(|until| until > Utc::now())
-        .unwrap_or(false);
-    balance >= 1.0 || has_reward_unlimited || node_active
-}
 
 #[derive(Serialize)]
 pub struct TrafficStatsResponse {
@@ -41,13 +30,6 @@ pub struct StatsQuery {
 pub struct BalanceResponse {
     pub client_id: String,
     pub balance_usd: f64,
-    pub vpn_days_remaining: i32,
-    pub vpn_seconds_remaining: i64,
-    pub vpn_pending_days: i32,
-    pub tier: String,
-    pub free_daily_limit_bytes: i64,
-    pub free_daily_used_bytes: i64,
-    pub free_daily_remaining_bytes: i64,
 }
 
 #[derive(serde::Deserialize)]
@@ -61,23 +43,82 @@ pub struct RegisterNodeResponse {
     pub token: String,
 }
 
+#[derive(Deserialize)]
+pub struct RegisterClientRequest {
+    pub email: String,
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub referral_code: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub struct LoginClientRequest {
+    pub email: String,
+}
+
+/// POST /api/v1/auth/register — Регистрация B2C клиента по Email
+pub async fn register_client(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<RegisterClientRequest>,
+) -> Result<Json<RegisterNodeResponse>, AppError> {
+    let client_id = uuid::Uuid::new_v4();
+    
+    // Пытаемся создать клиента. Если email уже есть — возвращаем существующего.
+    let id: uuid::Uuid = sqlx::query_scalar(
+        "INSERT INTO clients (id, email, balance_usd) \
+         VALUES ($1, $2, 0.0) \
+         ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email \
+         RETURNING id",
+    )
+    .bind(client_id)
+    .bind(&payload.email)
+    .fetch_one(&state.db_pool)
+    .await
+    .map_err(AppError::Database)?;
+
+    Ok(Json(RegisterNodeResponse {
+        node_id: id,
+        token: payload.email,
+    }))
+}
+
+/// POST /api/v1/auth/login — Логин B2C клиента по Email
+pub async fn login_client(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<LoginClientRequest>,
+) -> Result<Json<RegisterNodeResponse>, AppError> {
+    let row = sqlx::query("SELECT id FROM clients WHERE email = $1")
+        .bind(&payload.email)
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(AppError::Database)?;
+
+    match row {
+        Some(r) => {
+            let id: uuid::Uuid = r.get("id");
+            Ok(Json(RegisterNodeResponse {
+                node_id: id,
+                token: payload.email,
+            }))
+        }
+        None => Err(AppError::Unauthorized),
+    }
+}
+
 /// POST /api/v1/auth/register-node — Регистрация B2C ноды по Device ID
 pub async fn register_node(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<RegisterNodeRequest>,
 ) -> Result<Json<RegisterNodeResponse>, AppError> {
-    if payload.device_id.trim().is_empty() {
-        return Err(AppError::Unauthorized);
-    }
-
-    // Stable UUID derived from HWID/device_id to keep balance tied to one device identity.
-    let digest = Sha256::digest(payload.device_id.trim().as_bytes());
-    let mut raw = [0u8; 16];
-    raw.copy_from_slice(&digest[..16]);
-    // Mark as RFC4122 variant + v5-like version bits for consistency.
-    raw[6] = (raw[6] & 0x0f) | 0x50;
-    raw[8] = (raw[8] & 0x3f) | 0x80;
-    let device_uuid = uuid::Uuid::from_bytes(raw);
+    // Если device_id — валидный UUID, используем его.
+    // Если нет (например, Android ID или серийник) — генерируем стабильный UUID v5 от него.
+    let device_uuid = match uuid::Uuid::parse_str(&payload.device_id) {
+        Ok(u) => u,
+        Err(_) => {
+            // Используем фиксированный неймспейс для генерации стабильных UUID из произвольных строк
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, payload.device_id.as_bytes())
+        }
+    };
 
     // Используем транзакцию, чтобы создать и ноду, и клиента (чтобы баланс работал)
     let mut tx = state.db_pool.begin().await.map_err(AppError::Database)?;
@@ -107,11 +148,11 @@ pub async fn register_node(
 
     tx.commit().await.map_err(AppError::Database)?;
 
+    // В учебных целях возвращаем device_id как токен, с которым можно ходить в /balance
     // В продакшене тут должен генерироваться JWT.
-    // Пока используем node_id как токен для простоты, но это уже реальный UUID.
     Ok(Json(RegisterNodeResponse {
         node_id,
-        token: node_id.to_string(),
+        token: payload.device_id,
     }))
 }
 
@@ -121,20 +162,13 @@ pub async fn get_balance(
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<BalanceResponse>, AppError> {
     // Пытаемся плавно найти баланс. Если клиента нет (старый переходный период), создаем его.
-    let (balance, pending_days, unlimited_until): (f64, i32, Option<chrono::DateTime<Utc>>) = match sqlx::query(
-        "SELECT
-            balance_usd::float8 as balance,
-            COALESCE(reward_pending_days, 0) as reward_pending_days,
-            reward_unlimited_until
-         FROM clients
-         WHERE id = $1"
-    )
-    .bind(auth.client_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(AppError::Database)?
+    let balance: f64 = match sqlx::query_scalar::<_, f64>("SELECT balance_usd::float8 FROM clients WHERE id = $1")
+        .bind(auth.client_id)
+        .fetch_optional(&state.db_pool)
+        .await
+        .map_err(AppError::Database)? 
     {
-        Some(r) => (r.get("balance"), r.get("reward_pending_days"), r.get("reward_unlimited_until")),
+        Some(b) => b,
         None => {
             // Если не нашли в clients, проверяем в mobile_nodes
             let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_nodes WHERE id = $1)")
@@ -151,54 +185,16 @@ pub async fn get_balance(
                     .execute(&state.db_pool)
                     .await
                     .map_err(AppError::Database)?;
-                (0.0, 0, None)
+                0.0
             } else {
                 return Err(AppError::Unauthorized);
             }
         }
     };
 
-    let now = Utc::now();
-    let vpn_seconds_remaining = unlimited_until
-        .filter(|ts| *ts > now)
-        .map(|ts| (ts - now).num_seconds())
-        .unwrap_or(0)
-        .max(0);
-
-    // This reflects only active unlimited time.
-    let vpn_days_remaining = ((vpn_seconds_remaining as f64) / 86_400.0).ceil() as i32;
-    let vpn_pending_days = pending_days.max(0);
-    let node_active = state.registry.active_connections.contains_key(&auth.client_id);
-    let paid = is_paid_tier(balance, unlimited_until, node_active);
-
-    let used_today: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(bytes_used, 0) FROM client_daily_traffic WHERE client_id = $1 AND traffic_date = CURRENT_DATE"
-    )
-    .bind(auth.client_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(AppError::Database)?
-    .unwrap_or(0);
-
-    let free_daily_limit_bytes = FREE_DAILY_LIMIT_BYTES;
-    let free_daily_used_bytes = if paid { 0 } else { used_today.max(0) };
-    let free_daily_remaining_bytes = if paid {
-        0
-    } else {
-        (free_daily_limit_bytes - free_daily_used_bytes).max(0)
-    };
-    let tier = if paid { "paid" } else { "free" }.to_string();
-
     Ok(Json(BalanceResponse {
         client_id: auth.client_id.to_string(),
         balance_usd: balance,
-        vpn_days_remaining,
-        vpn_seconds_remaining,
-        vpn_pending_days,
-        tier,
-        free_daily_limit_bytes,
-        free_daily_used_bytes,
-        free_daily_remaining_bytes,
     }))
 }
 
@@ -290,108 +286,29 @@ pub async fn get_stats(
 #[derive(Serialize)]
 pub struct VpnConfigResponse {
     pub vless_link: String,
-    pub core_config_json: String,
     pub assigned_ip: String,
     pub subnet: String,
     pub gateway: String,
     pub dns: Vec<String>,
     pub tier: String,
     pub max_speed_mbps: i32,
-    pub free_daily_limit_bytes: i64,
-    pub free_daily_used_bytes: i64,
-    pub free_daily_remaining_bytes: i64,
-    pub node_active: bool,
-}
-
-#[derive(Deserialize)]
-pub struct VpnConfigQuery {
 }
 
 pub async fn get_vpn_config(
     State(state): State<Arc<AppState>>,
-    Query(_query): Query<VpnConfigQuery>,
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<VpnConfigResponse>, AppError> {
-    // Parse Reality destination (host:port), fall back to default if malformed
-    let reality_dest = state.reality_dest.as_str();
-    let (reality_host, _reality_port) = reality_dest
-        .split_once(':')
-        .map(|(host, port)| (host.to_string(), port.parse::<u16>().unwrap_or(443)))
-        .unwrap_or_else(|| (reality_dest.to_string(), 443));
-
     // 1. Get client balance (free tier allowed with $0)
-    let mut tx = state.db_pool.begin().await.map_err(AppError::Database)?;
-
-    let row = sqlx::query(
-        "SELECT
-            balance_usd::float8 as balance,
-            COALESCE(reward_pending_days, 0) as reward_pending_days,
-            reward_unlimited_until
-         FROM clients
-         WHERE id = $1
-         FOR UPDATE"
-    )
+    let row = sqlx::query("SELECT balance_usd::float8 as balance FROM clients WHERE id = $1")
         .bind(auth.client_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&state.db_pool)
         .await
         .map_err(AppError::Database)?;
 
-    let (balance, pending_days, mut reward_unlimited_until): (f64, i32, Option<chrono::DateTime<Utc>>) = match row {
-        Some(r) => (
-            r.get("balance"),
-            r.get("reward_pending_days"),
-            r.get("reward_unlimited_until"),
-        ),
-        None => {
-            let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM mobile_nodes WHERE id = $1)")
-                .bind(auth.client_id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(AppError::Database)?;
-
-            if exists {
-                sqlx::query(
-                    "INSERT INTO clients (id, email, balance_usd) VALUES ($1, $2, 0.0) ON CONFLICT DO NOTHING"
-                )
-                .bind(auth.client_id)
-                .bind(format!("{}@byteaway.internal", auth.client_id))
-                .execute(&mut *tx)
-                .await
-                .map_err(AppError::Database)?;
-
-                (0.0, 0, None)
-            } else {
-                return Err(AppError::Unauthorized);
-            }
-        }
+    let balance: f64 = match row {
+        Some(r) => r.get("balance"),
+        None => return Err(AppError::Unauthorized),
     };
-
-    // Activate pending reward days on first/next VPN config request.
-    if pending_days > 0 {
-        let now = Utc::now();
-        let base = match reward_unlimited_until {
-            Some(until) if until > now => until,
-            _ => now,
-        };
-        let new_until = base + Duration::days(pending_days as i64);
-
-        sqlx::query(
-            "UPDATE clients
-             SET reward_unlimited_until = $1,
-                 reward_pending_days = 0,
-                 reward_first_activated_at = COALESCE(reward_first_activated_at, NOW())
-             WHERE id = $2"
-        )
-        .bind(new_until)
-        .bind(auth.client_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(AppError::Database)?;
-
-        reward_unlimited_until = Some(new_until);
-    }
-
-    tx.commit().await.map_err(AppError::Database)?;
 
     // 2. Получаем или создаем назначенный IP через VPN registry
     let mut conn = state.redis_client
@@ -403,151 +320,43 @@ pub async fn get_vpn_config(
     let assigned_ip: Option<String> = conn.get(&assigned_key).await.map_err(AppError::Redis)?;
 
     let assigned_ip = if let Some(ip) = assigned_ip {
-        // Refresh TTL to keep existing assignment alive for active users
-        let _: () = conn.expire(&assigned_key, 86_400).await.unwrap_or_default();
         ip
     } else {
         let next: i64 = redis::cmd("INCR").arg("vpn:ip:next").query_async(&mut conn).await.map_err(AppError::Redis)?;
         let host = 2 + ((next - 1) % 250);
         let ip = format!("10.8.0.{}", host);
-        conn.set_ex::<_, _, ()>(&assigned_key, &ip, 86_400).await.map_err(AppError::Redis)?;
+        conn.set::<_, _, ()>(&assigned_key, &ip).await.map_err(AppError::Redis)?;
         ip
     };
 
-    let node_active = state.registry.active_connections.contains_key(&auth.client_id);
-    let paid = is_paid_tier(balance, reward_unlimited_until, node_active);
-
-    let used_today: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(bytes_used, 0) FROM client_daily_traffic WHERE client_id = $1 AND traffic_date = CURRENT_DATE"
-    )
-    .bind(auth.client_id)
-    .fetch_optional(&state.db_pool)
-    .await
-    .map_err(AppError::Database)?
-    .unwrap_or(0);
-
-    let free_daily_limit_bytes = FREE_DAILY_LIMIT_BYTES;
-    let free_daily_used_bytes = if paid { 0 } else { used_today.max(0) };
-    let free_daily_remaining_bytes = if paid {
-        0
+    // 3. Определяем tier клиента (free = баланс < $1, paid = баланс >= $1)
+    let (tier, max_speed_mbps) = if balance >= 1.0 {
+        ("paid".to_string(), 0) // 0 = unlimited
     } else {
-        (free_daily_limit_bytes - free_daily_used_bytes).max(0)
+        ("free".to_string(), 10) // 10 Mbps limit
     };
-    let tier = if paid { "paid" } else { "free" }.to_string();
-    let max_speed_mbps = 0;
-
-    if !paid && free_daily_remaining_bytes <= 0 {
-        return Err(AppError::InsufficientBalance);
-    }
 
     info!(
-        "VPN config requested for client {} [tier={} speed={}Mbps free_rem={}B] ip={} host={}:{}",
-        auth.client_id,
-        tier,
-        max_speed_mbps,
-        free_daily_remaining_bytes,
-        assigned_ip,
-        state.vpn_public_host,
-        state.vpn_port
+        "VPN config requested for client {} [tier={} speed={}Mbps] ip={}",
+        auth.client_id, tier, max_speed_mbps, assigned_ip
     );
 
     let link = format!(
-        "vless://{}@{}:{}?encryption=none&security=reality&sni={}&fp=chrome&pbk={}&sid={}&spx=%2F&flow=xtls-rprx-vision#ByteAway-VPN",
+        "vless://{}@{}:{}?encryption=none&security=reality&sni=google.com&fp=chrome&pbk={}&sid={}#ByteAway-VPN",
         state.vpn_client_uuid,
         state.vpn_public_host,
         state.vpn_port,
-        reality_host,
         state.reality_public_key,
         state.reality_short_id
     );
 
-    let xray_config_json = serde_json::json!({
-        "log": {
-            "level": "warn"
-        },
-        "dns": {
-            "servers": [
-                {
-                    "tag": "dns-remote",
-                    "address": "https://1.1.1.1/dns-query",
-                    "detour": "proxy"
-                },
-                {
-                    "tag": "dns-local",
-                    "address": "8.8.8.8:53",
-                    "detour": "direct"
-                }
-            ],
-            "strategy": "ipv4_only"
-        },
-        "inbounds": [
-            {
-                "type": "socks",
-                "tag": "socks-in",
-                "listen": "127.0.0.1",
-                "listen_port": 10808,
-                "sniff": true,
-                "sniff_override_destination": true
-            }
-        ],
-        "outbounds": [
-            {
-                "type": "vless",
-                "tag": "proxy",
-                "server": state.vpn_public_host,
-                "server_port": state.vpn_port,
-                "uuid": state.vpn_client_uuid,
-                "flow": "xtls-rprx-vision",
-                "packet_encoding": "xudp",
-                "tls": {
-                    "enabled": true,
-                    "server_name": reality_host.clone(),
-                    "utls": {
-                        "enabled": true,
-                        "fingerprint": "chrome"
-                    },
-                    "reality": {
-                        "enabled": true,
-                        "public_key": state.reality_public_key,
-                        "short_id": state.reality_short_id
-                    }
-                }
-            },
-            {
-                "type": "dns",
-                "tag": "dns-out"
-            },
-            {
-                "type": "direct",
-                "tag": "direct"
-            }
-        ],
-        "route": {
-            "rules": [
-                {
-                    "protocol": "dns",
-                    "outbound": "dns-out"
-                },
-                {
-                    "inbound": "socks-in",
-                    "outbound": "proxy"
-                }
-            ]
-        }
-    }).to_string();
-
     Ok(Json(VpnConfigResponse {
         vless_link: link,
-        core_config_json: xray_config_json,
         assigned_ip,
         subnet: "10.8.0.0/24".to_string(),
         gateway: "10.8.0.1".to_string(),
-        dns: vec!["1.1.1.1".to_string(), "8.8.8.8".to_string(), "9.9.9.9".to_string()],
+        dns: vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()],
         tier,
         max_speed_mbps,
-        free_daily_limit_bytes,
-        free_daily_used_bytes,
-        free_daily_remaining_bytes,
-        node_active,
     }))
 }

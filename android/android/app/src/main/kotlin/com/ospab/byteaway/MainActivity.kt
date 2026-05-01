@@ -4,9 +4,9 @@ import android.content.Context
 import androidx.multidex.MultiDex
 import com.ospab.byteaway.utils.DeviceInfoChannel
 import com.ospab.byteaway.utils.ApkUpdateChannel
+import com.ospab.byteaway.utils.AppChannel
 import com.ospab.byteaway.receiver.ConditionReceiver
 import com.ospab.byteaway.service.ServiceBridge
-import com.ospab.byteaway.service.VpnChannel
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import androidx.annotation.NonNull
@@ -25,9 +25,9 @@ class MainActivity : FlutterActivity() {
 
             // Register APK updater channel
             ApkUpdateChannel.register(this, flutterEngine)
-            
-            // Register VPN channel для Go ядра
-            VpnChannel.register(flutterEngine, this)
+
+            // Register AppChannel for split tunnel
+            AppChannel.register(this, flutterEngine)
         } catch (t: Throwable) {
             android.util.Log.e("ByteAway", "Failed to register ServiceBridge", t)
         }
@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onDestroy() {
         ConditionReceiver.unregisterNetworkCallback(applicationContext)
+        ServiceBridge.clearActivity()
         super.onDestroy()
     }
 

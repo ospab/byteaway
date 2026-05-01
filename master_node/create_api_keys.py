@@ -7,7 +7,7 @@ import requests
 import sys
 
 # Конфигурация
-API_BASE = "http://localhost:3000/api/v1/admin"
+API_BASE = "https://byteaway.xyz/api/v1/admin"
 ADMIN_TOKEN = "admin_token_123"  # TODO: Реальная аутентификация
 
 def create_test_api_key():

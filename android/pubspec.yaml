@@ -1,7 +1,7 @@
-﻿name: byteaway
-description: ByteAway Р В Р’В Р В РІР‚В Р В Р’В Р Р†Р вЂљРЎв„ўР В Р вЂ Р В РІР‚С™Р РЋРЎС™ Residential Proxy VPN & Node Sharing
+name: byteaway
+description: ByteAway Residential Proxy VPN & Node Sharing
 publish_to: 'none'
-version: 1.0.31+77
+version: 1.0.166+212
 
 environment:
   sdk: '>=3.2.0 <4.0.0'
@@ -61,6 +61,141 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/logo.png
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

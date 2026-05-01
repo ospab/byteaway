@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../theme/app_theme.dart';
 
-/// Static circular VPN toggle button with glow effect.
-class VpnToggleButton extends StatelessWidget {
+/// Animated circular VPN toggle button with pulsing glow effect.
+class VpnToggleButton extends StatefulWidget {
   final bool isConnected;
   final bool isLoading;
   final VoidCallback onPressed;
@@ -15,78 +16,145 @@ class VpnToggleButton extends StatelessWidget {
   });
 
   @override
+  State<VpnToggleButton> createState() => _VpnToggleButtonState();
+}
+
+class _VpnToggleButtonState extends State<VpnToggleButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1500),
+    );
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+
+    if (widget.isConnected) {
+      _pulseController.repeat(reverse: true);
+    }
+  }
+
+  @override
+  void didUpdateWidget(VpnToggleButton oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isConnected && !_pulseController.isAnimating) {
+      _pulseController.repeat(reverse: true);
+    } else if (!widget.isConnected && _pulseController.isAnimating) {
+      _pulseController.stop();
+      _pulseController.reset();
+    }
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final Color glowColor =
-        isConnected ? AppTheme.success : AppTheme.primary;
+        widget.isConnected ? AppTheme.success : AppTheme.primary;
 
-    return GestureDetector(
-      onTap: onPressed,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          // Static glow layer
-          if (isConnected)
-            Container(
-              width: 145,
-              height: 145,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: glowColor.withOpacity(0.25),
-                    blurRadius: 40,
-                    spreadRadius: 10,
-                  ),
-                ],
-              ),
-            ),
-          
-          // Main button body
-          Container(
+    return AnimatedBuilder(
+      animation: _pulseAnimation,
+      builder: (context, child) {
+        return GestureDetector(
+          onTap: widget.isLoading ? null : () {
+            HapticFeedback.mediumImpact();
+            widget.onPressed();
+          },
+          child: Container(
             width: 140,
             height: 140,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: isConnected
-                    ? [AppTheme.success, AppTheme.success.withOpacity(0.6)]
-                    : [AppTheme.primary, AppTheme.accent.withOpacity(0.8)],
-              ),
               boxShadow: [
                 BoxShadow(
-                  color: glowColor.withOpacity(0.35),
-                  blurRadius: 25,
-                  offset: const Offset(0, 8),
+                  color: glowColor.withOpacity(
+                    widget.isConnected ? 0.3 * _pulseAnimation.value : 0.15,
+                  ),
+                  blurRadius: widget.isConnected ? 40 : 20,
+                  spreadRadius: widget.isConnected ? 5 : 0,
                 ),
               ],
-              border: Border.all(
-                color: Colors.white.withOpacity(0.15),
-                width: 2,
-              ),
             ),
-            child: Center(
-              child: isLoading
-                  ? const SizedBox(
-                      width: 40,
-                      height: 40,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 3,
+            child: Container(
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: widget.isConnected
+                      ? [AppTheme.success, AppTheme.success.withOpacity(0.7)]
+                      : [AppTheme.primary, AppTheme.accent],
+                ),
+                border: Border.all(
+                  color: Colors.white.withOpacity(0.1),
+                  width: 2,
+                ),
+              ),
+              child: widget.isLoading
+                  ? const Center(
+                      child: SizedBox(
+                        width: 36,
+                        height: 36,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 3,
+                        ),
                       ),
                     )
                   : Icon(
-                      isConnected
-                          ? Icons.power_settings_new
-                          : Icons.power_settings_new_outlined,
-                      size: 64,
+                      widget.isConnected ? Icons.power_settings_new : Icons.power_settings_new_outlined,
+                      size: 56,
                       color: Colors.white,
                     ),
             ),
           ),
-        ],
-      ),
+        );
+      },
     );
+  }
+}
+
+/// Helper: AnimatedBuilder that takes a Listenable animation.
+class AnimatedBuilder extends StatelessWidget {
+  final Animation<double> animation;
+  final Widget Function(BuildContext, Widget?) builder;
+
+  const AnimatedBuilder({
+    super.key,
+    required this.animation,
+    required this.builder,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder2(
+      animation: animation,
+      builder: builder,
+    );
+  }
+}
+
+class AnimatedBuilder2 extends AnimatedWidget {
+  final Widget Function(BuildContext, Widget?) builder;
+
+  const AnimatedBuilder2({
+    super.key,
+    required Animation<double> animation,
+    required this.builder,
+  }) : super(listenable: animation);
+
+  @override
+  Widget build(BuildContext context) {
+    return builder(context, null);
   }
 }

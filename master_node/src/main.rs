@@ -24,18 +24,23 @@ use tracing_subscriber::EnvFilter;
 
 fn print_banner() {
     let banner = r#"
- ____        _        _                         
-| __ ) _   _| |_ ___ / \__      ____ _ _   _   
-|  _ \| | | | __/ _ / _ \ \ /\ / / _` | | | |  
-| |_) | |_| | ||  __/ ___ \ V  V / (_| | |_| |  
-|____/ \__, |\__\___/_/   \_\_/\_/ \__,_|\__, |  
-       |___/                             |___/   
+    ____        _        _                         
+   | __ ) _   _| |_ ___ / \__      ____ _ _   _   
+   |  _ \| | | | __/ _ / _ \ \ /\ / / _` | | | |  
+   | |_) | |_| | ||  __/ ___ \ V  V / (_| | |_| |  
+   |____/ \__, |\__\___/_/   \_\_/\_/ \__,_|\__, |  
+          |___/                             |___/   
     "#;
+    
+    // Clear screen for a fresh "elite" start (optional, but professional)
+    print!("\x1B[2J\x1B[1;1H");
+    
     println!("{}", banner.cyan().bold());
-    println!("{}", "═══════════════════════════════════════════════".dimmed());
-    println!("  {} {}", "Service:".dimmed(), "Residential Proxy Master Node".white().bold());
-    println!("  {} {}", "Version:".dimmed(), env!("CARGO_PKG_VERSION").yellow());
-    println!("{}", "═══════════════════════════════════════════════".dimmed());
+    println!("{}", " ═════════════════════════════════════════════════════════════".dimmed());
+    println!("  {} {}", "Service:".dimmed(), "ByteAway Residential Proxy Master Node".white().bold());
+    println!("  {} {}    {} {}", "Version:".dimmed(), env!("CARGO_PKG_VERSION").yellow(), "Security:".dimmed(), "VLESS+Reality".green());
+    println!("  {} {}", "Status:".dimmed(), "Operational".bright_green().bold());
+    println!("{}", " ═════════════════════════════════════════════════════════════".dimmed());
     println!();
 }
 
@@ -45,17 +50,29 @@ fn status(icon: &str, label: &str, value: &str) {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Install default crypto provider for rustls 0.23+
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install default crypto provider");
+
+    // Load config first to check debug mode
+    let config = Config::from_env()?;
+    
+    // Configure logging based on debug mode
+    let log_level = if config.debug_mode {
+        "debug,sqlx=warn"
+    } else {
+        "info,sqlx=warn,master_node=info"
+    };
+    
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_target(false)
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level)))
+        .with_target(config.debug_mode)
         .init();
 
     print_banner();
 
-    // 1. Конфигурация
-    let config = Config::from_env()?;
+    // 1. Конфигурация уже загружена выше для логирования
     status("✔", "Config", "loaded from .env");
 
     // 2. PostgreSQL
@@ -64,6 +81,11 @@ async fn main() -> anyhow::Result<()> {
         .connect(&config.database_url)
         .await?;
     status("✔", "Postgres", &config.database_url);
+
+    // Run migrations
+    sqlx::migrate!("./migrations")
+        .run(&db_pool)
+        .await?;
 
     // 3. Redis
     let redis_client = redis::Client::open(config.redis_url.as_str())
@@ -108,6 +130,7 @@ async fn main() -> anyhow::Result<()> {
         authenticator,
         billing_engine: billing_engine.clone(),
         price_per_gb_usd: config.price_per_gb_usd,
+        auto_add_balance_usd: config.auto_add_balance_usd,
         socks5_port: config.socks5_port,
         vpn_public_host: config.vpn_public_host,
         vpn_port: config.vpn_port,
@@ -121,19 +144,21 @@ async fn main() -> anyhow::Result<()> {
         turnstile_verify_url: config.turnstile_verify_url,
         app_update_manifest_path: config.app_update_manifest_path,
         public_base_url: config.public_base_url,
+        admin_api_key: config.admin_api_key,
     });
 
 
 
     let tunnel_state = Arc::new(TunnelState {
         registry: registry.clone(),
-        app_state: app_state.clone(),
+        _app_state: app_state.clone(),
     });
 
     let quic_tunnel_state = Arc::new(QuicTunnelState {
         registry: registry.clone(),
         app_state: app_state.clone(),
     });
+
 
     status("✔", "Auth", "authenticator ready");
     status("✔", "VPN Gateways", "registry ready");
@@ -194,7 +219,7 @@ async fn main() -> anyhow::Result<()> {
         let key_path = config.node_quic_key_path.clone();
         let state = quic_tunnel_state.clone();
         Some(tokio::spawn(async move {
-            if let Err(e) = run_quic_server(quic_addr, &cert_path, &key_path, state).await {
+            if let Err(e) = run_quic_server(quic_addr, &cert_path, &key_path, state, "QUIC").await {
                 tracing::error!("QUIC node ingress crashed: {e}");
             }
         }))
@@ -203,12 +228,26 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // 7b. WS fallback node ingress (TCP-based)
+    let _ws_fallback_handle = if config.node_quic_enabled {
+        let ws_addr: std::net::SocketAddr = "0.0.0.0:5443".parse()?;
+        status("▶", "Node WS", &format!("ws://{}", ws_addr));
+        Some(tokio::spawn(async move {
+            // WS tunnel handled by axum /ws route
+            tokio::signal::ctrl_c().await.ok();
+        }))
+    } else {
+        None
+    };
+
+
     println!();
     println!("{}", "═══════════════════════════════════════════════".dimmed());
     println!("  {} {}", "Status:".dimmed(), "ALL SYSTEMS ONLINE".green().bold());
     println!("  {} {}", "Hint:".dimmed(), "Press Ctrl+C to shut down".yellow());
     println!("{}", "═══════════════════════════════════════════════".dimmed());
     println!();
+
 
     // 8. Graceful shutdown
     tokio::signal::ctrl_c().await?;

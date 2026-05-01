@@ -1,8 +1,8 @@
-use axum::{extract::State, Json};
+use crate::node_manager::registry::NodeRegistry;
+use axum::{extract::State, response::Json};
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 #[derive(Serialize)]
 pub struct HealthResponse {
@@ -29,7 +29,7 @@ pub async fn health_handler(
     Json(HealthResponse {
         status: "ok".to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        active_nodes: state.registry.active_connections.len(),
+        active_nodes: NodeRegistry::active_connections(&*state.registry).len(),
     })
 }
 
@@ -40,18 +40,19 @@ pub async fn stats_handler(
     let mut nodes_with_sessions = 0usize;
     let mut max_sessions_on_single_node = 0usize;
 
-    for entry in state.registry.active_connections.iter() {
-        let count = entry.value().active_sessions.load(Ordering::Relaxed) as usize;
-        if count > 0 {
+    for entry in NodeRegistry::active_connections(&*state.registry).iter() {
+        let count: u32 = entry.value().active_sessions.load(std::sync::atomic::Ordering::Relaxed);
+        let count_usize = count as usize;
+        if count_usize > 0 {
             nodes_with_sessions += 1;
         }
-        if count > max_sessions_on_single_node {
-            max_sessions_on_single_node = count;
+        if count_usize > max_sessions_on_single_node {
+            max_sessions_on_single_node = count_usize;
         }
     }
 
     Json(StatsResponse {
-        active_nodes: state.registry.active_connections.len(),
+        active_nodes: NodeRegistry::active_connections(&*state.registry).len(),
         nodes_with_sessions,
         max_sessions_on_single_node,
         generated_at_unix: chrono::Utc::now().timestamp() as u64,

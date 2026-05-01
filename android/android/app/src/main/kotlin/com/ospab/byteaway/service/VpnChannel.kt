@@ -62,7 +62,7 @@ object VpnChannel {
             Log.i("ByteAway", "Starting VPN with config")
             
             // Используем существующий ServiceBridge для запуска VPN
-            val success = ServiceBridge.startVpnService(context, config, mtu)
+            val success = ServiceBridge.startVpnService(context, config)
             
             if (success) {
                 Log.i("ByteAway", "VPN started successfully")

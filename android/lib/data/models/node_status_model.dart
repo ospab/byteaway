@@ -32,21 +32,13 @@ class NodeStatusModel {
 
   /// Map from platform channel data (camelCase keys).
   factory NodeStatusModel.fromPlatform(Map<dynamic, dynamic> map) {
-    final nodeActive = map['nodeActive'] == true;
-    final nodeConnecting = map['nodeConnecting'] == true;
-    final state = nodeActive ? 'active' : (nodeConnecting ? 'connecting' : 'inactive');
-    final nodeError = (map['nodeErrorMessage'] as String?)?.trim();
-    final genericError = (map['errorMessage'] as String?)?.trim();
-
     return NodeStatusModel(
-      state: state,
+      state: map['nodeActive'] == true ? 'active' : 'inactive',
       totalBytesShared: map['bytesShared'] as int? ?? 0,
       currentSpeedMbps: (map['currentSpeed'] as num?)?.toDouble() ?? 0,
       activeSessions: map['activeSessions'] as int? ?? 0,
       uptimeSeconds: map['uptime'] as int? ?? 0,
-      errorMessage: (nodeError != null && nodeError.isNotEmpty)
-          ? nodeError
-          : ((genericError != null && genericError.isNotEmpty) ? genericError : null),
+      errorMessage: map['errorMessage'] as String?,
     );
   }
 

@@ -1,3 +1,4 @@
+use crate::node_manager::registry::NodeRegistry;
 use crate::error::AppError;
 use crate::state::AppState;
 use axum::{extract::State, Json};
@@ -87,7 +88,7 @@ pub async fn report_vpn_traffic(
         }
     };
 
-    let node_active = state.registry.active_connections.contains_key(&payload.client_id);
+    let node_active = NodeRegistry::active_connections(&*state.registry).contains_key(&payload.client_id);
     let is_paid = is_paid_tier(current_balance, reward_unlimited_until, node_active);
 
     if !is_paid {
@@ -158,50 +159,23 @@ pub async fn report_vpn_traffic(
         }));
     }
 
-    // Check if client has sufficient balance
-    if current_balance < cost {
-        // Insufficient balance - mark session for termination
-        info!(
-            "VPN client {} has insufficient balance: ${:.4} available, ${:.4} required",
-            payload.client_id, current_balance, cost
-        );
-        
-        // Update session to mark it should be terminated
-        sqlx::query(
-            "UPDATE vpn_sessions 
-             SET is_active = FALSE, ended_at = NOW(), 
-                 bytes_upload = $2, bytes_download = $3, billed_usd = $4
-             WHERE client_id = $1 AND vpn_gateway_id = $5 AND is_active = TRUE"
-        )
-        .bind(payload.client_id)
-        .bind(payload.bytes_upload as i64)
-        .bind(payload.bytes_download as i64)
-        .bind(cost)
-        .bind(&payload.gateway_id)
-        .execute(&state.db_pool)
-        .await
-        .map_err(AppError::Database)?;
-
-        return Ok(Json(VpnTrafficResponse {
-            success: false,
-            billed_usd: 0.0,
-            remaining_balance: current_balance,
-        }));
-    }
-
-    // Deduct balance and update session
-    let new_balance = current_balance - cost;
-    
+    // Use atomic operation to check and deduct balance
     let result = sqlx::query(
-        "UPDATE clients SET balance_usd = balance_usd - $1 WHERE id = $2 AND balance_usd >= $1"
+        "UPDATE clients 
+         SET balance_usd = balance_usd - $1 
+         WHERE id = $2 AND balance_usd >= $1
+         RETURNING balance_usd"
     )
     .bind(cost)
     .bind(payload.client_id)
-    .execute(&state.db_pool)
-    .await;
+    .fetch_optional(&state.db_pool)
+    .await
+    .map_err(AppError::Database)?;
 
     match result {
-        Ok(r) if r.rows_affected() > 0 => {
+        Some(row) => {
+            let new_balance: f64 = row.get("balance_usd");
+            
             // Update session stats
             sqlx::query(
                 "UPDATE vpn_sessions 
@@ -212,7 +186,7 @@ pub async fn report_vpn_traffic(
             .bind(payload.bytes_upload as i64)
             .bind(payload.bytes_download as i64)
             .bind(cost)
-              .bind(&payload.gateway_id)
+            .bind(&payload.gateway_id)
             .execute(&state.db_pool)
             .await
             .map_err(AppError::Database)?;
@@ -228,8 +202,34 @@ pub async fn report_vpn_traffic(
                 remaining_balance: new_balance,
             }))
         }
-        _ => {
-            Err(AppError::InsufficientBalance)
+        None => {
+            // Insufficient balance - mark session for termination
+            info!(
+                "VPN client {} has insufficient balance: ${:.4} available, ${:.4} required",
+                payload.client_id, current_balance, cost
+            );
+            
+            // Update session to mark it should be terminated
+            sqlx::query(
+                "UPDATE vpn_sessions 
+                 SET is_active = FALSE, ended_at = NOW(), 
+                     bytes_upload = $2, bytes_download = $3, billed_usd = $4
+                 WHERE client_id = $1 AND vpn_gateway_id = $5 AND is_active = TRUE"
+            )
+            .bind(payload.client_id)
+            .bind(payload.bytes_upload as i64)
+            .bind(payload.bytes_download as i64)
+            .bind(cost)
+            .bind(&payload.gateway_id)
+            .execute(&state.db_pool)
+            .await
+            .map_err(AppError::Database)?;
+
+            Ok(Json(VpnTrafficResponse {
+                success: false,
+                billed_usd: 0.0,
+                remaining_balance: current_balance,
+            }))
         }
     }
 }
@@ -284,7 +284,7 @@ pub async fn check_client_session(
         (0.0, None)
     };
 
-    let node_active = state.registry.active_connections.contains_key(&payload.client_id);
+    let node_active = NodeRegistry::active_connections(&*state.registry).contains_key(&payload.client_id);
     let paid = is_paid_tier(balance, reward_unlimited_until, node_active);
 
     // Free-tier users: check daily limit instead of balance

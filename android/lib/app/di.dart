@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../core/network/api_client.dart';
 import '../core/network/ws_client.dart';
 import '../data/datasources/auth_local_ds.dart';
+import '../data/datasources/auth_remote_ds.dart';
 import '../data/datasources/balance_remote_ds.dart';
 import '../data/datasources/stats_remote_ds.dart';
 import '../data/datasources/node_remote_ds.dart';
@@ -23,6 +24,7 @@ import '../presentation/auth/auth_cubit.dart';
 import '../presentation/home/home_cubit.dart';
 import '../presentation/settings/settings_cubit.dart';
 import '../presentation/statistics/statistics_cubit.dart';
+import '../presentation/registration/registration_cubit.dart';
 
 final sl = GetIt.instance;
 
@@ -55,12 +57,17 @@ Future<void> initDependencies() async {
     () => NodeRemoteDataSource(),
   );
 
+  sl.registerLazySingleton(
+    () => AuthRemoteDataSource(sl<ApiClient>()),
+  );
+
   // ── Repositories ─────────────────────────────────────
   sl.registerLazySingleton<AuthRepository>(
-    () => AuthRepositoryImpl(sl<AuthLocalDataSource>(), sl<ApiClient>()),
+    () => AuthRepositoryImpl(
+        sl<AuthLocalDataSource>(), sl<AuthRemoteDataSource>(), sl<ApiClient>()),
   );
   sl.registerLazySingleton<VpnRepository>(
-    () => VpnRepositoryImpl(sl<ApiClient>(), sl<AuthLocalDataSource>()),
+    () => VpnRepositoryImpl(sl<ApiClient>()),
   );
   sl.registerLazySingleton<NodeRepository>(
     () => NodeRepositoryImpl(sl<NodeRemoteDataSource>()),
@@ -79,14 +86,17 @@ Future<void> initDependencies() async {
   sl.registerLazySingleton(() => GetBalanceUseCase(sl<StatsRepository>()));
   sl.registerLazySingleton(
       () => GetTrafficHistoryUseCase(sl<StatsRepository>()));
+  sl.registerLazySingleton(() => ConnectVpnOstpUseCase(sl<VpnRepository>()));
 
   // ── Cubits ───────────────────────────────────────────
   sl.registerLazySingleton<AuthCubit>(
-    () => AuthCubit(sl<LoginUseCase>(), sl<AuthRepository>(), sl<AuthLocalDataSource>()),
+    () => AuthCubit(
+        sl<LoginUseCase>(), sl<AuthRepository>(), sl<AuthLocalDataSource>()),
   );
   sl.registerFactory<HomeCubit>(
     () => HomeCubit(
       connectVpn: sl<ConnectVpnUseCase>(),
+      connectVpnOstp: sl<ConnectVpnOstpUseCase>(),
       disconnectVpn: sl<DisconnectVpnUseCase>(),
       startNode: sl<StartNodeUseCase>(),
       stopNode: sl<StopNodeUseCase>(),
@@ -102,5 +112,8 @@ Future<void> initDependencies() async {
   );
   sl.registerFactory<StatisticsCubit>(
     () => StatisticsCubit(sl<GetTrafficHistoryUseCase>()),
+  );
+  sl.registerFactory<RegistrationCubit>(
+    () => RegistrationCubit(sl<AuthRepository>()),
   );
 }

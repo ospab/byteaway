@@ -18,6 +18,8 @@ class SettingsCubit extends Cubit<SettingsState> {
       killSwitch: _localDs.getKillSwitch(),
       nodeTransportMode: _localDs.getNodeTransportMode(),
       vpnMtu: _localDs.getVpnMtu(),
+      showVpnButton: _localDs.getShowVpnButton(),
+      vpnProtocol: _localDs.getVpnProtocol(),
     ));
   }
 
@@ -56,5 +58,17 @@ class SettingsCubit extends Cubit<SettingsState> {
   Future<void> setVpnMtu(int mtu) async {
     await _localDs.setVpnMtu(mtu);
     emit(state.copyWith(vpnMtu: _localDs.getVpnMtu()));
+  }
+
+  /// Toggle debug VPN button visibility on home screen.
+  Future<void> toggleShowVpnButton(bool show) async {
+    await _localDs.setShowVpnButton(show);
+    emit(state.copyWith(showVpnButton: show));
+  }
+
+  /// Toggle VPN protocol.
+  Future<void> setVpnProtocol(String protocol) async {
+    await _localDs.setVpnProtocol(protocol);
+    emit(state.copyWith(vpnProtocol: protocol));
   }
 }

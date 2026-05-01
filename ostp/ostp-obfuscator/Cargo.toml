@@ -1,0 +1,11 @@
+[package]
+name = "ostp-obfuscator"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bytes.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+thiserror.workspace = true

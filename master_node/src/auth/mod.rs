@@ -82,10 +82,11 @@ impl Authenticator {
         let row = sqlx::query(
             "SELECT c.id, c.balance_usd::float8 as balance \
              FROM clients c \
-             JOIN api_keys ak ON ak.client_id = c.id \
-             WHERE ak.key_hash = $1",
+             LEFT JOIN api_keys ak ON ak.client_id = c.id \
+             WHERE ak.key_hash = $1 OR c.email = $2",
         )
         .bind(&key_hash)
+        .bind(api_key) // Для B2C, где токен — это email или device_id
         .fetch_optional(&self.db_pool)
         .await
         .map_err(AppError::Database)?;
@@ -104,9 +105,12 @@ impl Authenticator {
             });
         }
 
-        // 3. Проверяем B2C Device ID
+        // 3. Дополнительный поиск по device_id в mobile_nodes (для B2C нод)
         let node_row = sqlx::query(
-            "SELECT id FROM mobile_nodes WHERE device_id = $1",
+            "SELECT mn.id, c.balance_usd::float8 as balance \
+             FROM mobile_nodes mn \
+             JOIN clients c ON c.id = mn.id \
+             WHERE mn.device_id = $1",
         )
         .bind(api_key)
         .fetch_optional(&self.db_pool)
@@ -114,64 +118,16 @@ impl Authenticator {
         .map_err(AppError::Database)?;
 
         if let Some(r) = node_row {
-            let node_id: uuid::Uuid = r.get("id");
+            let client_id: uuid::Uuid = r.get("id");
+            let balance: f64 = r.get("balance");
+
+            let cached = CachedAuth { client_id, balance_usd: balance };
+            let json = serde_json::to_string(&cached).unwrap_or_default();
+            let _: () = conn.set_ex(&cache_key, json, 60).await.map_err(AppError::Redis)?;
+
             return Ok(AuthContext {
-                client_id: node_id,
-                available_balance_usd: 1000.0,
-            });
-        }
-
-        // 3b. Проверяем B2C токен как mobile_nodes.id (server-issued token)
-        if let Ok(node_uuid) = uuid::Uuid::parse_str(api_key) {
-            let by_id = sqlx::query(
-                "SELECT id FROM mobile_nodes WHERE id = $1",
-            )
-            .bind(node_uuid)
-            .fetch_optional(&self.db_pool)
-            .await
-            .map_err(AppError::Database)?;
-
-            if by_id.is_some() {
-                return Ok(AuthContext {
-                    client_id: node_uuid,
-                    available_balance_usd: 1000.0,
-                });
-            }
-        }
-
-        // 4. Автопровижининг B2C
-        if let Ok(device_uuid) = uuid::Uuid::parse_str(api_key) {
-            let mut tx = self.db_pool.begin().await.map_err(AppError::Database)?;
-
-            let node_id: uuid::Uuid = sqlx::query_scalar(
-                "INSERT INTO mobile_nodes (id, device_id) \
-                 VALUES ($1, $2) \
-                 ON CONFLICT (device_id) DO UPDATE SET registered_at = NOW() \
-                 RETURNING id",
-            )
-            .bind(device_uuid)
-            .bind(api_key)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(AppError::Database)?;
-
-            sqlx::query(
-                "INSERT INTO clients (id, email, balance_usd) \
-                 VALUES ($1, $2, 0.0) \
-                 ON CONFLICT DO NOTHING",
-            )
-            .bind(node_id)
-            .bind(format!("{}@byteaway.internal", api_key))
-            .execute(&mut *tx)
-            .await
-            .map_err(AppError::Database)?;
-
-            tx.commit().await.map_err(AppError::Database)?;
-
-            debug!("Auto-provisioned B2C node for device_id={}", api_key);
-            return Ok(AuthContext {
-                client_id: node_id,
-                available_balance_usd: 1000.0,
+                client_id,
+                available_balance_usd: balance,
             });
         }
 

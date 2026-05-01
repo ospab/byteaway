@@ -98,8 +98,10 @@ impl VpnGatewayRegistry {
         sqlx::query(
             "INSERT INTO vpn_sessions (client_id, assigned_ip, vpn_gateway_id, started_at, is_active) 
              VALUES ($1, $2, $3, NOW(), TRUE)
-             ON CONFLICT (client_id, is_active) WHERE is_active = TRUE 
-             DO UPDATE SET assigned_ip = $2, vpn_gateway_id = $3, started_at = NOW()"
+             ON CONFLICT (client_id) 
+             DO UPDATE SET assigned_ip = EXCLUDED.assigned_ip, vpn_gateway_id = EXCLUDED.vpn_gateway_id, 
+                          started_at = EXCLUDED.started_at, is_active = TRUE
+             WHERE vpn_sessions.is_active = FALSE"
         )
         .bind(client_id)
         .bind(&assigned_ip)

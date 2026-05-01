@@ -443,6 +443,21 @@ pub async fn create_business_api_token(
     let plain_token = format!("sk_live_{}_{}", account.client_id.simple(), credential_id.simple());
     let key_hash = Authenticator::hash_key(&plain_token);
 
+    // Создаём client с балансом если настроено в AUTO_ADD_BALANCE_USD
+    if state.auto_add_balance_usd > 0.0 {
+        sqlx::query(
+            "INSERT INTO clients (id, email, balance_usd, created_at) 
+             VALUES ($1, $2, $3, NOW()) 
+             ON CONFLICT (id) DO UPDATE SET balance_usd = clients.balance_usd + $3"
+        )
+        .bind(account.client_id)
+        .bind(&account.email)
+        .bind(state.auto_add_balance_usd)
+        .execute(&state.db_pool)
+        .await
+        .map_err(AppError::Database)?;
+    }
+
     sqlx::query(
         "INSERT INTO api_keys (key_hash, client_id, credential_id, label, rate_limit_req_sec, created_at)
          VALUES ($1, $2, $3, $4, $5, NOW())"

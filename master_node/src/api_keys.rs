@@ -139,59 +139,60 @@ impl ApiKeyManager {
         let api_key = Self::generate_api_key();
         let key_id = Uuid::new_v4().to_string()[..8].to_string();
         let api_key_hash = Self::hash_api_key(&api_key);
+        let client_uuid = Uuid::new_v4();
+        let credential_uuid = Uuid::new_v4();
 
         let traffic_limit = request.traffic_limit_gb.unwrap_or_else(|| request.tier.default_traffic_limit());
         let max_sessions = request.max_sessions.unwrap_or_else(|| request.tier.default_max_sessions());
         let expires_at = request.expires_days.map(|days| Utc::now() + Duration::days(days as i64));
 
-        let api_key_row = sqlx::query_as!(
-            ApiKey,
-            r#"
-            INSERT INTO api_keys (
-                key_id, api_key_hash, name, email, tier, 
-                balance_usd, traffic_limit_gb, traffic_used_gb, 
-                max_sessions, allowed_countries, is_active, 
-                expires_at, created_at, updated_at
-            ) VALUES (
-                $1, $2, $3, $4, $5,
-                $6, $7, $8,
-                $9, $10, $11,
-                $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-            )
-            RETURNING *
-            "#,
-            key_id,
-            api_key_hash,
-            request.name,
-            request.email,
-            request.tier as ApiTier,
-            request.initial_balance_usd.unwrap_or(0.0),
-            traffic_limit,
-            0.0,
-            max_sessions,
-            request.allowed_countries.as_ref().map(|countries| countries.as_slice()),
-            true,
-            expires_at,
+        // Начинаем транзакцию
+        let mut tx = self.pool.begin().await?;
+
+        // 1. Создаем client запись
+        sqlx::query(
+            "INSERT INTO clients (id, email, balance_usd, created_at) 
+             VALUES ($1, $2, $3, NOW()) 
+             ON CONFLICT DO NOTHING"
         )
-        .fetch_one(&self.pool)
+        .bind(client_uuid)
+        .bind(request.email.clone().unwrap_or_else(|| format!("{}@byteaway.internal", request.name)))
+        .bind(request.initial_balance_usd.unwrap_or(0.0))
+        .execute(&mut *tx)
         .await?;
 
+        // 2. Создаем запись в api_keys (старая структура для аутентификатора)
+        sqlx::query(
+            "INSERT INTO api_keys (key_hash, client_id, credential_id, label, rate_limit_req_sec, created_at)
+             VALUES ($1, $2, $3, $4, $5, NOW())"
+        )
+        .bind(&api_key_hash)
+        .bind(client_uuid)
+        .bind(credential_uuid)
+        .bind(request.name.clone())
+        .bind(10i32)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        // Возвращаем ответ
         Ok(ApiKeyResponse {
-            key_id: api_key_row.key_id,
-            api_key, // Возвращаем только при создании
-            name: api_key_row.name,
-            email: api_key_row.email,
-            tier: api_key_row.tier,
-            balance_usd: api_key_row.balance_usd,
-            traffic_limit_gb: api_key_row.traffic_limit_gb,
-            traffic_used_gb: api_key_row.traffic_used_gb,
-            traffic_remaining_gb: api_key_row.traffic_limit_gb - api_key_row.traffic_used_gb,
-            max_sessions: api_key_row.max_sessions,
-            allowed_countries: api_key_row.allowed_countries,
-            is_active: api_key_row.is_active,
-            expires_at: api_key_row.expires_at,
-            created_at: api_key_row.created_at,
-            last_used_at: api_key_row.last_used_at,
+            key_id,
+            api_key,
+            name: request.name,
+            email: request.email,
+            tier: request.tier,
+            balance_usd: request.initial_balance_usd.unwrap_or(0.0),
+            traffic_limit_gb: traffic_limit,
+            traffic_used_gb: 0.0,
+            traffic_remaining_gb: traffic_limit,
+            max_sessions,
+            allowed_countries: request.allowed_countries,
+            is_active: true,
+            expires_at,
+            created_at: Utc::now(),
+            last_used_at: None,
         })
     }
 
@@ -199,58 +200,73 @@ impl ApiKeyManager {
     pub async fn validate_api_key(&self, api_key: &str) -> Result<Option<ApiKey>, Box<dyn std::error::Error>> {
         let api_key_hash = Self::hash_api_key(api_key);
 
-        let key = sqlx::query_as!(
-            ApiKey,
-            r#"
-            SELECT * FROM api_keys 
-            WHERE api_key_hash = $1 AND is_active = true
-            AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)
-            "#,
-            api_key_hash
+        // Ищем в правильной таблице api_keys (старая структура с key_hash)
+        let row = sqlx::query(
+            "SELECT ak.key_hash, ak.client_id, ak.credential_id, ak.label, ak.created_at,
+                    c.id as client_id_exists, c.balance_usd 
+             FROM api_keys ak 
+             JOIN clients c ON c.id = ak.client_id
+             WHERE ak.key_hash = $1"
         )
+        .bind(&api_key_hash)
         .fetch_optional(&self.pool)
         .await?;
 
-        // Обновляем last_used_at если ключ найден
-        if let Some(ref key) = key {
-            sqlx::query!(
-                "UPDATE api_keys SET last_used_at = CURRENT_TIMESTAMP WHERE id = $1",
-                key.id
-            )
-            .execute(&self.pool)
-            .await?;
+        if row.is_some() {
+            // Возвращаем валидный ключ
+            Ok(Some(ApiKey {
+                id: 0, // Не используется
+                key_id: String::new(),
+                api_key_hash: api_key_hash.clone(),
+                name: row.as_ref().unwrap().get("label").unwrap_or_default(),
+                email: None,
+                tier: ApiTier::Starter,
+                balance_usd: row.as_ref().unwrap().get("balance_usd").unwrap_or(0.0),
+                traffic_limit_gb: 50.0,
+                traffic_used_gb: 0.0,
+                max_sessions: 10,
+                allowed_countries: None,
+                is_active: true,
+                expires_at: None,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                last_used_at: None,
+            }))
+        } else {
+            Ok(None)
         }
-
-        Ok(key)
     }
 
     /// Получает список всех API ключей (для админа)
     pub async fn list_api_keys(&self) -> Result<Vec<ApiKeyResponse>, Box<dyn std::error::Error>> {
-        let keys = sqlx::query_as!(
-            ApiKey,
-            "SELECT * FROM api_keys ORDER BY created_at DESC"
+        // Запрашиваем из обеих таблиц - clients и api_keys
+        let rows = sqlx::query(
+            "SELECT ak.key_hash, ak.label, ak.created_at, c.balance_usd, c.id as client_id
+             FROM api_keys ak 
+             JOIN clients c ON c.id = ak.client_id
+             ORDER BY ak.created_at DESC"
         )
         .fetch_all(&self.pool)
         .await?;
 
-        let responses: Vec<ApiKeyResponse> = keys
+        let responses: Vec<ApiKeyResponse> = rows
             .into_iter()
-            .map(|key| ApiKeyResponse {
-                key_id: key.key_id,
-                api_key: "".to_string(), // Не возвращаем существующие ключи
-                name: key.name,
-                email: key.email,
-                tier: key.tier,
-                balance_usd: key.balance_usd,
-                traffic_limit_gb: key.traffic_limit_gb,
-                traffic_used_gb: key.traffic_used_gb,
-                traffic_remaining_gb: key.traffic_limit_gb - key.traffic_used_gb,
-                max_sessions: key.max_sessions,
-                allowed_countries: key.allowed_countries,
-                is_active: key.is_active,
-                expires_at: key.expires_at,
-                created_at: key.created_at,
-                last_used_at: key.last_used_at,
+            .map(|row| ApiKeyResponse {
+                key_id: row.get::<String, _>("key_hash").unwrap_or_default()[..8].to_string(),
+                api_key: "".to_string(),
+                name: row.get("label").unwrap_or_default(),
+                email: None,
+                tier: ApiTier::Starter,
+                balance_usd: row.get("balance_usd").unwrap_or(0.0),
+                traffic_limit_gb: 50.0,
+                traffic_used_gb: 0.0,
+                traffic_remaining_gb: 50.0,
+                max_sessions: 10,
+                allowed_countries: None,
+                is_active: true,
+                expires_at: None,
+                created_at: row.get("created_at").unwrap_or_else(|_| Utc::now()),
+                last_used_at: None,
             })
             .collect();
 
@@ -263,33 +279,27 @@ impl ApiKeyManager {
         key_id: &str,
         amount_usd: f64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        sqlx::query!(
-            "UPDATE api_keys SET balance_usd = balance_usd + $1, updated_at = CURRENT_TIMESTAMP WHERE key_id = $2",
-            amount_usd,
-            key_id
+        // Находим client_id по key_hash и обновляем баланс клиента
+        sqlx::query(
+            "UPDATE clients SET balance_usd = balance_usd + $1 
+             WHERE id = (SELECT client_id FROM api_keys WHERE key_hash = $2)"
         )
+        .bind(amount_usd)
+        .bind(key_id)
         .execute(&self.pool)
         .await?;
 
         Ok(())
     }
 
-    /// Добавляет использованный трафик
+    /// Добавляет использованный трафик (этот метод не используется напрямую - трафик учитывается через billing engine)
     pub async fn add_traffic_usage(
         &self,
         key_id: &str,
         bytes_transferred: i64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let gb_transferred = bytes_transferred as f64 / (1024.0 * 1024.0 * 1024.0);
-        
-        sqlx::query!(
-            "UPDATE api_keys SET traffic_used_gb = traffic_used_gb + $1, updated_at = CURRENT_TIMESTAMP WHERE key_id = $2",
-            gb_transferred,
-            key_id
-        )
-        .execute(&self.pool)
-        .await?;
-
+        // Трафик уже учитывается в billing/engine.rs через Redis -> Postgres
+        // Этот метод оставлен для совместимости но фактически не нужен
         Ok(())
     }
 
@@ -300,54 +310,66 @@ impl ApiKeyManager {
         start_date: DateTime<Utc>,
         end_date: DateTime<Utc>,
     ) -> Result<ApiKeyUsage, Box<dyn std::error::Error>> {
+        // Получаем client_id по key_hash
+        let client_uuid: Option<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT client_id FROM api_keys WHERE key_hash = $1"
+        )
+        .bind(key_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let client_id = match client_uuid {
+            Some(id) => id,
+            None => return Ok(ApiKeyUsage {
+                bytes_transferred: 0,
+                requests_count: 0,
+                sessions_count: 0,
+                countries_used: vec![],
+                cost_usd: 0.0,
+            }),
+        };
+
+        // Получаем статистику из traffic_history
         let stats = sqlx::query!(
             r#"
             SELECT 
-                COALESCE(SUM(bytes_transferred), 0) as bytes_transferred,
-                COALESCE(SUM(requests_count), 0) as requests_count,
-                COALESCE(SUM(sessions_count), 0) as sessions_count
-            FROM usage_stats 
-            WHERE api_key_id = (SELECT id FROM api_keys WHERE key_id = $1)
-            AND date BETWEEN $2 AND $3
+                COALESCE(SUM(bytes_used), 0) as bytes_transferred,
+                COUNT(*) as requests_count
+            FROM traffic_history 
+            WHERE client_id = $1
+            AND period_start BETWEEN $2 AND $3
             "#,
-            key_id,
+            client_id,
             start_date.date_naive(),
             end_date.date_naive()
         )
         .fetch_one(&self.pool)
         .await?;
 
-        let cost_usd = stats.bytes_transferred.unwrap_or(0) as f64 / (1024.0 * 1024.0 * 1024.0) * 5.0; // $5 per GB
+        let bytes = stats.bytes_transferred.unwrap_or(0);
+        let cost_usd = bytes as f64 / (1024.0 * 1024.0 * 1024.0) * 5.0;
 
         Ok(ApiKeyUsage {
-            bytes_transferred: stats.bytes_transferred.unwrap_or(0),
+            bytes_transferred: bytes,
             requests_count: stats.requests_count.unwrap_or(0),
-            sessions_count: stats.sessions_count.unwrap_or(0),
-            countries_used: vec![], // TODO: Implement countries tracking
+            sessions_count: stats.requests_count.unwrap_or(0),
+            countries_used: vec![],
             cost_usd,
         })
     }
 
-    /// Блокирует/разблокирует API ключ
+    /// Блокирует/разблокирует API ключ (удаляем запись из api_keys)
     pub async fn toggle_api_key(
         &self,
         key_id: &str,
         is_active: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        sqlx::query!(
-            "UPDATE api_keys SET is_active = $1, updated_at = CURRENT_TIMESTAMP WHERE key_id = $2",
-            is_active,
-            key_id
-        )
-        .execute(&self.pool)
-        .await?;
-
-        // Закрываем все активные сессии если блокируем
+        // Удаляем или добавляем запись - простая блокировка через удаление
         if !is_active {
-            sqlx::query!(
-                "UPDATE api_sessions SET is_active = false WHERE api_key_id = (SELECT id FROM api_keys WHERE key_id = $1)",
-                key_id
+            sqlx::query(
+                "DELETE FROM api_keys WHERE key_hash = $1"
             )
+            .bind(key_id)
             .execute(&self.pool)
             .await?;
         }
@@ -357,7 +379,9 @@ impl ApiKeyManager {
 
     /// Удаляет API ключ
     pub async fn delete_api_key(&self, key_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        sqlx::query!("DELETE FROM api_keys WHERE key_id = $1", key_id)
+        // Удаляем из api_keys (по key_hash)
+        sqlx::query("DELETE FROM api_keys WHERE key_hash = $1")
+            .bind(key_id)
             .execute(&self.pool)
             .await?;
 

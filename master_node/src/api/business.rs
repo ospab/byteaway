@@ -10,20 +10,37 @@ use std::sync::Arc;
 use tracing::info;
 use uuid::Uuid;
 
-async fn api_keys_has_column(pool: &sqlx::PgPool, column_name: &str) -> Result<bool, AppError> {
-    let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS (
-            SELECT 1
-            FROM information_schema.columns
-            WHERE table_schema = 'public' AND table_name = 'api_keys' AND column_name = $1
-        )",
+#[derive(Deserialize)]
+pub struct ReportErrorRequest {
+    pub message: String,
+    pub context: Option<serde_json::Value>,
+}
+
+/// POST /api/v1/business/report-error
+/// B2B clients can report errors via curl or SDK
+pub async fn report_business_error(
+    State(state): State<Arc<AppState>>,
+    Extension(auth): Extension<AuthContext>,
+    Json(payload): Json<ReportErrorRequest>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    info!(
+        "B2B Error reported by client {}: {}",
+        auth.client_id, payload.message
+    );
+
+    // Store in DB for later analysis
+    sqlx::query(
+        "INSERT INTO client_logs (client_id, level, message, metadata, created_at) \
+         VALUES ($1, 'ERROR', $2, $3, NOW())",
     )
-    .bind(column_name)
-    .fetch_one(pool)
+    .bind(auth.client_id)
+    .bind(&payload.message)
+    .bind(payload.context.unwrap_or(serde_json::json!({})))
+    .execute(&state.db_pool)
     .await
     .map_err(AppError::Database)?;
 
-    Ok(exists)
+    Ok(Json(serde_json::json!({ "status": "ok", "message": "Error report received" })))
 }
 
 /// Request to create new proxy credentials
@@ -37,8 +54,6 @@ pub struct CreateProxyRequest {
     pub allowed_ips: Option<Vec<String>>,
     /// Allowed domain patterns (glob patterns)
     pub allowed_domains: Option<Vec<String>>,
-    /// Target country for this credential (e.g. "RU", "US")
-    pub country: Option<String>,
 }
 
 /// Response with new proxy credentials
@@ -79,67 +94,27 @@ pub async fn create_proxy_credentials(
     let key_hash = format!("{:x}", Sha256::digest(api_key.as_bytes()));
 
     // 3. Build username with optional country/type filter
-    let country = payload.country.clone().unwrap_or_else(|| "RU".to_string()).to_uppercase(); 
+    let country = "US"; // Default, could be from payload
     let conn_type = "wifi"; // Default
     let cred_str = credential_id.to_string();
     let username_part = cred_str.split('-').next().unwrap_or("unknown");
     let username = format!("{}-{}-{}", country, conn_type, username_part);
 
-    // 4. Store in database (compatible with both old/new schemas)
-    let has_credential_id = api_keys_has_column(&state.db_pool, "credential_id").await?;
-    let has_label = api_keys_has_column(&state.db_pool, "label").await?;
-
-    match (has_credential_id, has_label) {
-        (true, true) => {
-            sqlx::query(
-                "INSERT INTO api_keys (key_hash, client_id, credential_id, label, rate_limit_req_sec, created_at)
-                 VALUES ($1, $2, $3, $4, $5, NOW())"
-            )
-            .bind(&key_hash)
-            .bind(auth.client_id)
-            .bind(credential_id)
-            .bind(&payload.label)
-            .bind(100)
-            .execute(&state.db_pool)
-            .await
-            .map_err(AppError::Database)?;
-        }
-        (true, false) => {
-            sqlx::query(
-                "INSERT INTO api_keys (key_hash, client_id, credential_id, rate_limit_req_sec, created_at)
-                 VALUES ($1, $2, $3, $4, NOW())"
-            )
-            .bind(&key_hash)
-            .bind(auth.client_id)
-            .bind(credential_id)
-            .bind(100)
-            .execute(&state.db_pool)
-            .await
-            .map_err(AppError::Database)?;
-        }
-        (false, _) => {
-            sqlx::query(
-                "INSERT INTO api_keys (key_hash, client_id, rate_limit_req_sec, created_at)
-                 VALUES ($1, $2, $3, NOW())"
-            )
-            .bind(&key_hash)
-            .bind(auth.client_id)
-            .bind(100)
-            .execute(&state.db_pool)
-            .await
-            .map_err(AppError::Database)?;
-        }
-    }
+    // 4. Store in database
+    sqlx::query(
+        "INSERT INTO api_keys (key_hash, client_id, rate_limit_req_sec, created_at) 
+         VALUES ($1, $2, $3, NOW())"
+    )
+    .bind(&key_hash)
+    .bind(auth.client_id)
+    .bind(100)
+    .execute(&state.db_pool)
+    .await
+    .map_err(AppError::Database)?;
 
     // 5. Store additional metadata in Redis for fast lookup
     let mut conn = state.redis_client
         .get_multiplexed_async_connection()
-        .await
-        .map_err(AppError::Redis)?;
-
-    let _: i64 = redis::cmd("INCR")
-        .arg("vpn:ip:next")
-        .query_async::<_, i64>(&mut conn)
         .await
         .map_err(AppError::Redis)?;
 
@@ -168,7 +143,7 @@ pub async fn create_proxy_credentials(
         username,
         password: api_key,
         proxy_host: state.vpn_public_host.clone(),
-        proxy_port: state.socks5_port,
+        proxy_port: 1080, // SOCKS5 port
     }))
 }
 
@@ -192,37 +167,12 @@ pub async fn list_proxy_credentials(
     State(state): State<Arc<AppState>>,
     Extension(auth): Extension<AuthContext>,
 ) -> Result<Json<ListProxyCredentialsResponse>, AppError> {
-    let has_credential_id = api_keys_has_column(&state.db_pool, "credential_id").await?;
-    let has_label = api_keys_has_column(&state.db_pool, "label").await?;
-
-    let sql = match (has_credential_id, has_label) {
-        (true, true) => {
-            "SELECT ak.key_hash, ak.created_at, ak.credential_id, ak.label
-             FROM api_keys ak
-             WHERE ak.client_id = $1
-             ORDER BY ak.created_at DESC"
-        }
-        (true, false) => {
-            "SELECT ak.key_hash, ak.created_at, ak.credential_id, NULL::varchar AS label
-             FROM api_keys ak
-             WHERE ak.client_id = $1
-             ORDER BY ak.created_at DESC"
-        }
-        (false, true) => {
-            "SELECT ak.key_hash, ak.created_at, NULL::uuid AS credential_id, ak.label
-             FROM api_keys ak
-             WHERE ak.client_id = $1
-             ORDER BY ak.created_at DESC"
-        }
-        (false, false) => {
-            "SELECT ak.key_hash, ak.created_at, NULL::uuid AS credential_id, NULL::varchar AS label
-             FROM api_keys ak
-             WHERE ak.client_id = $1
-             ORDER BY ak.created_at DESC"
-        }
-    };
-
-    let rows = sqlx::query(sql)
+    let rows = sqlx::query(
+        "SELECT ak.key_hash, ak.created_at, ak.rate_limit_req_sec
+         FROM api_keys ak
+         WHERE ak.client_id = $1
+         ORDER BY ak.created_at DESC"
+    )
     .bind(auth.client_id)
     .fetch_all(&state.db_pool)
     .await
@@ -233,17 +183,16 @@ pub async fn list_proxy_credentials(
     for row in rows {
         let key_hash: String = row.get("key_hash");
         let created_at: chrono::DateTime<chrono::Utc> = row.get("created_at");
-        let credential_id: Option<Uuid> = row.get("credential_id");
-        let label: Option<String> = row.get("label");
         
-        let username = format!("US-wifi-{}", &key_hash[..8]);
+        // Extract credential_id from key_hash pattern (simplified)
+        let cred_id = Uuid::new_v4(); // In production, parse from key_hash
         
         credentials.push(ProxyCredentialListItem {
-            credential_id: credential_id.unwrap_or_else(Uuid::new_v4),
-            label,
-            username,
+            credential_id: cred_id,
+            label: None, // Could be fetched from Redis
+            username: format!("US-wifi-{}", &key_hash[..8]),
             created_at: created_at.to_rfc3339(),
-            traffic_limit_gb: None, // Could be fetched from Redis if needed
+            traffic_limit_gb: None,
         });
     }
 

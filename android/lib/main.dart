@@ -15,6 +15,18 @@ import 'core/logger.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize logger with file persistence
+  await AppLogger.init();
+
+  // Optimize rendering performance
+  if (!AppConstants.isDevelopment) {
+    // Disable debug banners and optimize for release
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // Preload critical resources
+      _preloadCriticalResources();
+    });
+  }
+
   // Redirect debugPrint to AppLogger
   debugPrint = (String? message, {int? wrapWidth}) {
     if (message != null) {
@@ -54,6 +66,13 @@ void main() async {
   await authCubit.checkAuth();
 
   runApp(const ByteAwayApp());
+}
+
+/// Preload critical resources for better performance
+void _preloadCriticalResources() {
+  // Precache fonts and images if needed
+  // This can be expanded based on app requirements
+  AppLogger.log('Critical resources preloaded');
 }
 
 class ByteAwayApp extends StatelessWidget {

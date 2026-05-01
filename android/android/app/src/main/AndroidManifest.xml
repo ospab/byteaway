@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.ospab.byteaway">
 
     <!-- Permissions -->
@@ -8,18 +9,27 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
-    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
-    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
-
     
     <!-- VPN specific permissions -->
     <uses-permission android:name="android.permission.BIND_VPN_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.BIND_QUICK_SETTINGS_TILE" />
     
     <!-- Feature declaration -->
     <uses-feature android:name="android.software.vpn" android:required="false" />
+
+    <!-- Queries for Android 11+ to access other apps -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
 
     <application
         android:label="ByteAway"
@@ -46,32 +56,34 @@
             </intent-filter>
         </activity>
 
-        <!-- VPN + Foreground Service -->
+        <!-- Foreground Service -->
         <service
             android:name=".service.ByteAwayForegroundService"
             android:enabled="true"
             android:exported="false"
             android:permission="android.permission.BIND_VPN_SERVICE"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="connectedDevice|specialUse">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
             </intent-filter>
-            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_TYPE"
-                android:value="VPN connectivity management and bandwidth sharing." />
         </service>
+
+        <!-- Override sing-box AAR service declaration -->
+        <service
+            android:name="io.github.tim06.singBox.service.VPNService"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="connectedDevice|specialUse"
+            tools:node="merge" />
 
         <service
-            android:name=".service.ByteAwayTileService"
-            android:label="ByteAway"
-            android:icon="@mipmap/ic_launcher"
-            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.service.quicksettings.action.QS_TILE" />
-            </intent-filter>
-        </service>
-
-
+            android:name="com.tim.singBox.service.VPNService"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="connectedDevice|specialUse"
+            tools:node="merge" />
 
         <!-- Boot Receiver -->
         <receiver
@@ -85,6 +97,13 @@
             </intent-filter>
         </receiver>
 
+        <!-- Don't delete the meta-data below.
+             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
+        <!-- FileProvider for APK installation -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -95,10 +114,33 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- Don't delete the meta-data below.
-             This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
-        <meta-data
-            android:name="flutterEmbedding"
-            android:value="2" />
+        <!-- Quick Settings Tiles -->
+        <service
+            android:name=".tile.VpnTileService"
+            android:label="VPN"
+            android:icon="@drawable/ic_vpn_tile"
+            android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
+
+        <service
+            android:name=".tile.NodeTileService"
+            android:label="Узел"
+            android:icon="@drawable/ic_node_tile"
+            android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="true" />
+        </service>
     </application>
 </manifest>

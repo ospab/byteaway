@@ -38,6 +38,10 @@ impl BillingEngine for DefaultBillingEngine {
 
     /// Атомарно инкрементирует счётчики трафика в Redis
     async fn commit_usage(&self, client_id: Uuid, node_id: Uuid, bytes: u64) -> Result<(), AppError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        
         let mut conn = self.redis_client
             .get_multiplexed_async_connection()
             .await
@@ -45,6 +49,8 @@ impl BillingEngine for DefaultBillingEngine {
 
         let pair_key = format!("traffic:pair:{}:{}", client_id, node_id);
         let pair_id = format!("{}:{}", client_id, node_id);
+
+        tracing::info!("[BILLING] commit_usage: client={} node={} bytes={}", client_id, node_id, bytes);
 
         let _: () = redis::pipe()
             .atomic()
@@ -106,64 +112,71 @@ impl BillingEngine for DefaultBillingEngine {
             let gb = bytes as f64 / 1_073_741_824.0;
             let cost = gb * self.price_per_gb_usd;
 
-            // 1. Списываем баланс клиента
-            let result = sqlx::query(
-                "UPDATE clients SET balance_usd = balance_usd - $1 WHERE id = $2 AND balance_usd >= $1",
+            // 1. Списываем доступный баланс (partial charge), чтобы трафик не терялся в статистике.
+            let current_balance: f64 = sqlx::query_scalar(
+                "SELECT balance_usd::float8 FROM clients WHERE id = $1"
             )
-            .bind(cost)
             .bind(client_id)
+            .fetch_optional(&self.db_pool)
+            .await
+            .map_err(AppError::Database)?
+            .unwrap_or(0.0);
+
+            let billed_usd = current_balance.min(cost);
+            if billed_usd > 0.0 {
+                let _ = sqlx::query(
+                    "UPDATE clients
+                     SET balance_usd = GREATEST(balance_usd - $1, 0)
+                     WHERE id = $2"
+                )
+                .bind(billed_usd)
+                .bind(client_id)
+                .execute(&self.db_pool)
+                .await;
+            }
+
+            // 2. Начисляем трафик ноде и rewards (даже если billed_usd = 0, трафик был реально прокачан).
+            let _ = sqlx::query(
+                "UPDATE mobile_nodes SET total_gb_provided = total_gb_provided + $1 WHERE id = $2"
+            )
+            .bind(gb)
+            .bind(node_id)
+            .execute(&self.db_pool).await;
+
+            let _ = sqlx::query(
+                "UPDATE clients
+                 SET reward_shared_bytes_remainder = (reward_shared_bytes_remainder + $1) % $2,
+                     reward_pending_days = reward_pending_days + ((reward_shared_bytes_remainder + $1) / $2)::int
+                 WHERE id = $3"
+            )
+            .bind(bytes as i64)
+            .bind(REWARD_DAY_BYTES)
+            .bind(node_id)
             .execute(&self.db_pool)
             .await;
 
-            match result {
-                Ok(r) if r.rows_affected() > 0 => {
-                    // 2. Начисляем доход ноде (условно 70%) и обновляем total_gb
-                    // let _earnings = cost * 0.7; // Placeholder for future payout logic
-                    let _ = sqlx::query(
-                        "UPDATE mobile_nodes SET total_gb_provided = total_gb_provided + $1 WHERE id = $2"
-                    )
-                    .bind(gb)
-                    .bind(node_id)
-                    .execute(&self.db_pool).await;
+            // 3. Всегда пишем traffic_history, чтобы мобильная статистика/графики не теряли трафик.
+            let _ = sqlx::query(
+                "INSERT INTO traffic_history (client_id, node_id, bytes_used, billed_usd, period_start, period_end) \
+                 VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 hour', NOW())"
+            )
+            .bind(client_id)
+            .bind(node_id)
+            .bind(bytes as i64)
+            .bind(billed_usd)
+            .execute(&self.db_pool).await;
 
-                    // 2a. Reward accounting for shared traffic (server-side anti-cheat).
-                    // Every 200 MiB shared by node owner adds 1 pending unlimited day.
-                    // node_id == client row UUID for B2C node owners (same UUID used for both tables).
-                    let _ = sqlx::query(
-                        "UPDATE clients
-                         SET reward_shared_bytes_remainder = (reward_shared_bytes_remainder + $1) % $2,
-                             reward_pending_days = reward_pending_days + ((reward_shared_bytes_remainder + $1) / $2)::int
-                         WHERE id = $3"
-                    )
-                    .bind(bytes as i64)
-                    .bind(REWARD_DAY_BYTES)
-                    .bind(node_id)
-                    .execute(&self.db_pool)
-                    .await;
-
-                    // 3. Записываем в traffic_history
-                    let _ = sqlx::query(
-                        "INSERT INTO traffic_history (client_id, node_id, bytes_used, billed_usd, period_start, period_end) \
-                         VALUES ($1, $2, $3, $4, NOW() - INTERVAL '1 hour', NOW())"
-                    )
-                    .bind(client_id)
-                    .bind(node_id)
-                    .bind(bytes as i64)
-                    .bind(cost)
-                    .execute(&self.db_pool).await;
-
-                    info!("Flushed {} bytes ({:.4} USD) for client {} via node {}", bytes, cost, client_id, node_id);
-                }
-                Ok(_) => {
-                    warn!("Insufficient balance during flush for client {}", client_id);
-                    // Возвращаем байты обратно в Redis, чтобы не потерять (упрощено)
-                    let _: () = conn.incr(&pair_key, bytes).await.unwrap_or_default();
-                }
-                Err(e) => {
-                    warn!("DB error during flush for client {}: {}", client_id, e);
-                    let _: () = conn.incr(&pair_key, bytes).await.unwrap_or_default();
-                }
+            if billed_usd < cost {
+                warn!(
+                    "Partial billing during flush for client {}: used_bytes={} billed={:.4} requested={:.4}",
+                    client_id, bytes, billed_usd, cost
+                );
             }
+
+            info!(
+                "Flushed {} bytes ({:.4} USD billed) for client {} via node {}",
+                bytes, billed_usd, client_id, node_id
+            );
 
             // Убираем из active set
             let _: () = conn.srem("traffic:active_pairs", &pair_id)

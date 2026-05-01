@@ -18,6 +18,7 @@ import 'home_state.dart';
 /// VPN toggle, node status, balance display.
 class HomeCubit extends Cubit<HomeState> {
   final ConnectVpnUseCase _connectVpn;
+  final ConnectVpnOstpUseCase _connectVpnOstp;
   final DisconnectVpnUseCase _disconnectVpn;
   final StartNodeUseCase _startNode;
   final StopNodeUseCase _stopNode;
@@ -41,6 +42,7 @@ class HomeCubit extends Cubit<HomeState> {
 
   HomeCubit({
     required ConnectVpnUseCase connectVpn,
+    required ConnectVpnOstpUseCase connectVpnOstp,
     required DisconnectVpnUseCase disconnectVpn,
     required StartNodeUseCase startNode,
     required StopNodeUseCase stopNode,
@@ -50,11 +52,12 @@ class HomeCubit extends Cubit<HomeState> {
     required NodeRepository nodeRepository,
     required AuthLocalDataSource authLocalDs,
   })  : _connectVpn = connectVpn,
+        _connectVpnOstp = connectVpnOstp,
         _disconnectVpn = disconnectVpn,
         _startNode = startNode,
         _stopNode = stopNode,
         _getBalance = getBalance,
-      _getTrafficHistory = getTrafficHistory,
+        _getTrafficHistory = getTrafficHistory,
         _vpnRepository = vpnRepository,
         _nodeRepository = nodeRepository,
         _authLocalDs = authLocalDs,
@@ -123,10 +126,22 @@ class HomeCubit extends Cubit<HomeState> {
 
   void _emitNodeWithTodayShared(NodeStatus status) {
     final shouldKeepToggleOn = state.nodeToggleOn || status.isActive;
-    final effectiveStatus = shouldKeepToggleOn &&
-            (status.state == NodeConnectionState.inactive || status.state == NodeConnectionState.error)
-        ? const NodeStatus(state: NodeConnectionState.connecting)
-        : status;
+
+    // Prevent flickering by only changing state when necessary
+    NodeStatus effectiveStatus;
+    if (shouldKeepToggleOn &&
+        (status.state == NodeConnectionState.inactive ||
+            status.state == NodeConnectionState.error)) {
+      // Only show connecting if we weren't already in an error state
+      if (state.nodeStatus.state != NodeConnectionState.error) {
+        effectiveStatus =
+            const NodeStatus(state: NodeConnectionState.connecting);
+      } else {
+        effectiveStatus = status; // Keep error state to prevent flickering
+      }
+    } else {
+      effectiveStatus = status;
+    }
 
     if (effectiveStatus.isActive) {
       if (!_sessionBaselineInitialized) {
@@ -139,37 +154,54 @@ class HomeCubit extends Cubit<HomeState> {
     }
 
     final liveBytes = effectiveStatus.isActive
-        ? (effectiveStatus.totalBytesShared - _sessionSharedBaselineBytes).clamp(0, 1 << 62)
+        ? (effectiveStatus.totalBytesShared - _sessionSharedBaselineBytes)
+            .clamp(0, 1 << 62)
         : 0;
     final todaySharedGb = _todaySharedServerGb + (liveBytes / _bytesPerGb);
 
-    emit(state.copyWith(
-      nodeStatus: effectiveStatus,
-      nodeToggleOn: shouldKeepToggleOn,
-      todaySharedGb: todaySharedGb,
-    ));
+    // Only emit if state actually changed to prevent unnecessary updates
+    if (state.nodeStatus != effectiveStatus ||
+        state.nodeToggleOn != shouldKeepToggleOn ||
+        (todaySharedGb - state.todaySharedGb).abs() > 0.001) {
+      emit(state.copyWith(
+        nodeStatus: effectiveStatus,
+        nodeToggleOn: shouldKeepToggleOn,
+        todaySharedGb: todaySharedGb,
+      ));
+    }
   }
 
   /// Toggle VPN connection.
   Future<void> toggleVpn() async {
+    AppLogger.log(
+        'VPN: toggleVpn called, isActive=${state.vpnStatus.isActive}');
     if (state.vpnStatus.isActive) {
+      AppLogger.log('VPN: disconnecting...');
       emit(state.copyWith(
         vpnStatus: const VpnStatus(state: VpnConnectionState.disconnecting),
       ));
       await _disconnectVpn();
     } else {
+      AppLogger.log('VPN: connecting...');
       emit(state.copyWith(
         vpnStatus: const VpnStatus(state: VpnConnectionState.connecting),
       ));
       try {
+        AppLogger.log('VPN: fetching config...');
         final configMap = await _vpnRepository.getVpnConfig();
         final coreConfigJson = configMap['core_config_json'] as String?;
-        if (coreConfigJson == null || coreConfigJson.trim().isEmpty) {
-          AppLogger.log('VPN: empty core config received from server');
+        final vlessLink = (configMap['vless_link'] as String?)?.trim();
+        final hasCoreConfig =
+            coreConfigJson != null && coreConfigJson.trim().isNotEmpty;
+        final hasVlessLink = vlessLink != null && vlessLink.isNotEmpty;
+
+        if (!hasCoreConfig && !hasVlessLink) {
+          AppLogger.log(
+              'VPN: server returned no usable config (core_config_json/vless_link)');
           emit(state.copyWith(
             vpnStatus: const VpnStatus(
               state: VpnConnectionState.error,
-              errorMessage: 'Сервер вернул пустую VPN-конфигурацию Core',
+              errorMessage: 'Сервер вернул пустую VPN-конфигурацию',
             ),
           ));
           return;
@@ -177,13 +209,30 @@ class HomeCubit extends Cubit<HomeState> {
 
         final tier = configMap['tier'] as String? ?? 'free';
         final maxSpeed = configMap['max_speed_mbps'] as int? ?? 0;
-        AppLogger.log(
-            'VPN: config received, tier=$tier, maxSpeed=${maxSpeed}Mbps, coreConfigLength=${coreConfigJson.length}');
+        final payloadForNative = hasCoreConfig
+            ? coreConfigJson!
+            : jsonEncode({
+                'vless_link': vlessLink,
+                'tier': tier,
+                'max_speed_mbps': maxSpeed,
+              });
 
-        final safeConfig = _normalizeCoreConfig(coreConfigJson);
+        AppLogger.log(
+            'VPN: config received, tier=$tier, maxSpeed=${maxSpeed}Mbps, using=${hasCoreConfig ? "core_config_json" : "vless_link"}');
+
+        final safeConfig = _normalizeCoreConfig(payloadForNative);
+
+        // Check VPN protocol from settings
+        final vpnProtocol = _authLocalDs.getVpnProtocol();
+        AppLogger.log('VPN: using protocol=$vpnProtocol');
 
         // Pass full JSON config down to the native Kotlin layer
-        final success = await _connectVpn(safeConfig);
+        AppLogger.log(
+            'VPN: calling native method, protocol=$vpnProtocol, configLength=${safeConfig.length}');
+        final success = vpnProtocol == 'ostp'
+            ? await _connectVpnOstp(safeConfig)
+            : await _connectVpn(safeConfig);
+        AppLogger.log('VPN: native method returned: success=$success');
         if (!success) {
           AppLogger.log(
               'VPN: native start failed (permission/config/runtime error)');
@@ -218,8 +267,8 @@ class HomeCubit extends Cubit<HomeState> {
           nodeToggleOn: false,
           nodeStatus: const NodeStatus(state: NodeConnectionState.inactive),
         ));
-      AppLogger.log('Node: stop requested');
-      await _stopNode();
+        AppLogger.log('Node: stop requested');
+        await _stopNode();
         return;
       }
 
@@ -240,9 +289,8 @@ class HomeCubit extends Cubit<HomeState> {
       }
 
       final hardwareId = await DeviceInfoService.getHardwareId();
-      final deviceId = _isValidDeviceId(hardwareId)
-          ? hardwareId
-          : storedDeviceId;
+      final deviceId =
+          _isValidDeviceId(hardwareId) ? hardwareId : storedDeviceId;
 
       if (!_isValidDeviceId(deviceId)) {
         emit(state.copyWith(nodeToggleOn: false));
@@ -261,6 +309,19 @@ class HomeCubit extends Cubit<HomeState> {
       // Get real device country and connection type
       final country = await DeviceInfoService.getCountryCode();
       final connType = await DeviceInfoService.getConnectionType();
+
+      // Check if WiFi only mode is enabled
+      final wifiOnly = await _authLocalDs.getWifiOnly();
+      if (wifiOnly && connType != 'wifi') {
+        emit(state.copyWith(
+          nodeToggleOn: false,
+          nodeStatus: const NodeStatus(state: NodeConnectionState.error),
+          error:
+              'Раздача доступна только через WiFi. Отключите опцию "Только WiFi" в настройках или подключитесь к WiFi.',
+        ));
+        return;
+      }
+
       String? coreConfigJson;
 
       try {
@@ -270,26 +331,12 @@ class HomeCubit extends Cubit<HomeState> {
           coreConfigJson = raw;
         }
       } catch (e) {
-        AppLogger.log('Node: failed to fetch core config for anti-block fallback: $e');
+        AppLogger.log(
+            'Node: failed to fetch core config for anti-block fallback: $e');
       }
 
       final normalizedTransport = transportMode.trim().toLowerCase();
-      final requiresProxyConfig = normalizedTransport == 'ws' || normalizedTransport == 'hy2';
-      final hasProxyConfig = coreConfigJson != null && coreConfigJson.trim().isNotEmpty;
       final recommendedMtu = normalizedTransport == 'quic' ? 1280 : 1420;
-
-      if (requiresProxyConfig && !hasProxyConfig) {
-        emit(state.copyWith(
-          nodeToggleOn: false,
-          nodeStatus: const NodeStatus(state: NodeConnectionState.error),
-          error: 'Для режима WS/HY2 не получена конфигурация прокси. Проверьте сеть и повторите.',
-        ));
-        return;
-      }
-
-      if (!hasProxyConfig) {
-        AppLogger.log('Node: core config unavailable, QUIC will start with direct fallback');
-      }
 
       AppLogger.log('Node: detected country=$country, connection=$connType');
 
@@ -302,7 +349,6 @@ class HomeCubit extends Cubit<HomeState> {
         speedMbps: speedLimit,
         mtu: recommendedMtu,
         masterWsUrl: null,
-        coreConfigJson: coreConfigJson,
       );
 
       if (!started) {
@@ -312,7 +358,8 @@ class HomeCubit extends Cubit<HomeState> {
             state: NodeConnectionState.error,
             errorMessage: 'Не удалось запустить узел',
           ),
-          error: 'Нативный сервис отклонил запуск узла. Откройте логи и повторите.',
+          error:
+              'Нативный сервис отклонил запуск узла. Откройте логи и повторите.',
         ));
       }
     } finally {
@@ -355,16 +402,21 @@ class HomeCubit extends Cubit<HomeState> {
         if (item is! Map<String, dynamic>) continue;
         final streamSettings = item['streamSettings'];
         if (streamSettings is! Map<String, dynamic>) continue;
-        if ((streamSettings['security'] as String?)?.toLowerCase() != 'reality') continue;
+        if ((streamSettings['security'] as String?)?.toLowerCase() != 'reality')
+          continue;
 
         final realitySettings =
-            (streamSettings['realitySettings'] as Map<String, dynamic>?) ?? <String, dynamic>{};
+            (streamSettings['realitySettings'] as Map<String, dynamic>?) ??
+                <String, dynamic>{};
 
         String fallbackHost = 'google.com';
 
         final vnext = ((item['settings'] as Map<String, dynamic>?)?['vnext']);
-        if (vnext is List && vnext.isNotEmpty && vnext.first is Map<String, dynamic>) {
-          final address = (vnext.first as Map<String, dynamic>)['address'] as String?;
+        if (vnext is List &&
+            vnext.isNotEmpty &&
+            vnext.first is Map<String, dynamic>) {
+          final address =
+              (vnext.first as Map<String, dynamic>)['address'] as String?;
           if (address != null && address.trim().isNotEmpty) {
             fallbackHost = address.trim();
           }
@@ -378,7 +430,8 @@ class HomeCubit extends Cubit<HomeState> {
           }
         }
 
-        var serverName = (realitySettings['serverName'] as String?)?.trim() ?? '';
+        var serverName =
+            (realitySettings['serverName'] as String?)?.trim() ?? '';
         if (serverName.isEmpty) {
           serverName = fallbackHost;
           realitySettings['serverName'] = serverName;
@@ -417,7 +470,8 @@ class HomeCubit extends Cubit<HomeState> {
 
       return jsonEncode(decoded);
     } catch (e) {
-      AppLogger.log('VPN: failed to normalize core config, using raw config. Error: $e');
+      AppLogger.log(
+          'VPN: failed to normalize core config, using raw config. Error: $e');
       return rawJson;
     }
   }

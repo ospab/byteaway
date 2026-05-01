@@ -84,365 +84,321 @@ export default function BusinessDashboard() {
   const credentialsCount = credentialsQuery.data?.length ?? 0;
 
   const tabs = [
-    {
-      key: 'overview' as const,
-      ru: 'Обзор',
-      en: 'Overview',
-    },
-    {
-      key: 'tokens' as const,
-      ru: 'Токены',
-      en: 'Tokens',
-    },
-    {
-      key: 'credentials' as const,
-      ru: 'Доступы',
-      en: 'Credentials',
-    },
-    {
-      key: 'billing' as const,
-      ru: 'Платежи',
-      en: 'Billing',
-    },
+    { key: 'overview' as const, label: lang === 'ru' ? 'Сводка' : 'Overview' },
+    { key: 'tokens' as const, label: lang === 'ru' ? 'API Токены' : 'API Tokens' },
+    { key: 'credentials' as const, label: lang === 'ru' ? 'Доступы' : 'Credentials' },
+    { key: 'billing' as const, label: lang === 'ru' ? 'Финансы' : 'Financials' },
   ];
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-2">
-        <h1 className="text-3xl font-bold text-white">{lang === 'ru' ? 'Рабочий кабинет' : 'Operations console'}</h1>
-        <p className="text-slate-400">
-          {lang === 'ru'
-            ? 'Управляйте доступами, контролируйте баланс и поддерживайте рабочие операции команды.'
-            : 'Manage access, control balance, and run day-to-day team operations.'}
-        </p>
+    <div className="max-w-6xl mx-auto space-y-10">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+        <div className="space-y-2">
+          <div className="flex items-center gap-3">
+             <h1 className="text-3xl font-display font-bold text-white">{lang === 'ru' ? 'Консоль управления' : 'Management Console'}</h1>
+             <span className={`px-2 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest ${enabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'}`}>
+                {enabled ? 'Online' : 'Restricted'}
+             </span>
+          </div>
+          <p className="text-slate-500 text-sm max-w-xl">
+            {lang === 'ru'
+              ? 'Единый центр управления сетевой инфраструктурой, авторизацией и балансом вашей компании.'
+              : 'Central hub for network infrastructure, authorization, and corporate balance management.'}
+          </p>
+        </div>
+
+        <nav className="flex items-center p-1 bg-white/5 rounded-xl border border-white/5">
+           {tabs.map((t) => (
+             <button
+               key={t.key}
+               onClick={() => setActiveTab(t.key)}
+               className={`px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all ${activeTab === t.key ? 'bg-white text-ink shadow-lg shadow-white/10' : 'text-slate-500 hover:text-slate-300'}`}
+             >
+               {t.label}
+             </button>
+           ))}
+        </nav>
       </div>
 
-      <div className="card p-2">
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {tabs.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              onClick={() => setActiveTab(tab.key)}
-              className={`rounded-lg px-3 py-2 text-sm font-medium transition ${
-                activeTab === tab.key
-                  ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-400/50'
-                  : 'bg-slate-900/40 text-slate-300 border border-slate-800 hover:border-slate-700'
-              }`}
-            >
-              {lang === 'ru' ? tab.ru : tab.en}
-            </button>
-          ))}
-        </div>
-      </div>
+      <div className="w-full h-px bg-gradient-to-r from-transparent via-white/5 to-transparent" />
 
       {activeTab === 'overview' && (
-        <>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="card space-y-1">
-              <p className="text-xs uppercase tracking-wider text-slate-500">Auth state</p>
-              <p className="text-2xl font-bold text-white">{enabled ? (lang === 'ru' ? 'Авторизован' : 'Authorized') : (lang === 'ru' ? 'Не авторизован' : 'Not authorized')}</p>
-              <p className="text-slate-400 text-sm">{lang === 'ru' ? 'Для операций управления требуется рабочий токен.' : 'A workspace token is required for management actions.'}</p>
-            </div>
-            <div className="card space-y-1">
-              <p className="text-xs uppercase tracking-wider text-slate-500">Token records</p>
-              <p className="text-2xl font-bold text-white">{tokensCount}</p>
-              <p className="text-slate-400 text-sm">{lang === 'ru' ? 'Количество выданных API-токенов.' : 'Number of issued API tokens.'}</p>
-            </div>
-            <div className="card space-y-1">
-              <p className="text-xs uppercase tracking-wider text-slate-500">Credential records</p>
-              <p className="text-2xl font-bold text-white">{credentialsCount}</p>
-              <p className="text-slate-400 text-sm">{lang === 'ru' ? 'Количество выданных рабочих доступов.' : 'Number of issued operational credentials.'}</p>
-            </div>
+        <div className="space-y-8 animate-in fade-in duration-500">
+          <div className="grid gap-6 md:grid-cols-3">
+             <StatsCard 
+                label={lang === 'ru' ? 'Активные токены' : 'Active Tokens'} 
+                value={tokensCount.toString()} 
+                sub={lang === 'ru' ? 'Всего выпущено API-ключей' : 'Total issued API keys'} 
+             />
+             <StatsCard 
+                label={lang === 'ru' ? 'Рабочие доступы' : 'Live Credentials'} 
+                value={credentialsCount.toString()} 
+                sub={lang === 'ru' ? 'Активные сессии и доступы' : 'Active sessions and credentials'} 
+             />
+             <StatsCard 
+                label={lang === 'ru' ? 'Текущий баланс' : 'Current Balance'} 
+                value={balanceQuery.data ? `$${balanceQuery.data.balance_usd.toFixed(2)}` : '—'} 
+                sub={lang === 'ru' ? 'Доступные средства на счете' : 'Available funds in USD'} 
+                highlight
+             />
           </div>
 
-          <div className="card space-y-3">
-            <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Рабочий токен' : 'Workspace token'}</h3>
-            <p className="text-slate-400 text-sm">{lang === 'ru' ? 'Укажите токен доступа для управленческих операций в кабинете.' : 'Provide your access token to unlock management operations.'}</p>
-            <input
-              className="input"
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="sk_live_..."
-            />
-          </div>
+          <div className="grid gap-6 md:grid-cols-2">
+             <div className="card space-y-6">
+                <div>
+                   <h3 className="text-lg font-bold text-white mb-1">{lang === 'ru' ? 'Workspace Токен' : 'Workspace Token'}</h3>
+                   <p className="text-xs text-slate-500">{lang === 'ru' ? 'Используйте Bearer-токен для разблокировки административных действий.' : 'Use your Bearer token to unlock administrative actions.'}</p>
+                </div>
+                <div className="relative group">
+                   <input
+                     className="input font-mono !pr-12 text-sm"
+                     value={token}
+                     onChange={(e) => setToken(e.target.value)}
+                     placeholder="sk_live_..."
+                     type="password"
+                   />
+                   <div className="absolute right-4 top-1/2 -translate-y-1/2 opacity-20 group-hover:opacity-100 transition-opacity pointer-events-none">
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+                   </div>
+                </div>
+             </div>
 
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="card space-y-2">
-              <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Баланс' : 'Balance'}</h3>
-              {balanceQuery.isLoading && <p className="text-slate-400">{lang === 'ru' ? 'Загрузка...' : 'Loading...'}</p>}
-              {balanceQuery.isError && <p className="text-red-400">Error: {(balanceQuery.error as Error).message}</p>}
-              {balanceQuery.data && (
-                <>
-                  <p className="text-4xl font-bold text-white">${balanceQuery.data.balance_usd.toFixed(2)}</p>
-                  <p className="text-slate-400 text-sm">client_id: {balanceQuery.data.client_id}</p>
-                </>
-              )}
-            </div>
-
-            <div className="card space-y-2">
-              <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Регион по умолчанию' : 'Default region'}</h3>
-              <p className="text-slate-400 text-sm">{lang === 'ru' ? 'Профиль для новых токенов и доступов.' : 'Profile used for new tokens and credentials.'}</p>
-              <select className="input" value={country} onChange={(e) => setCountry(e.target.value)}>
-                <option>US</option>
-                <option>DE</option>
-                <option>RU</option>
-                <option>SG</option>
-              </select>
-            </div>
+             <div className="card space-y-6">
+                <div>
+                   <h3 className="text-lg font-bold text-white mb-1">{lang === 'ru' ? 'Профиль региона' : 'Regional Profile'}</h3>
+                   <p className="text-xs text-slate-500">{lang === 'ru' ? 'Укажите предпочтительную локацию для новых ресурсов.' : 'Set the preferred location for new resources.'}</p>
+                </div>
+                <select className="input text-sm appearance-none cursor-pointer" value={country} onChange={(e) => setCountry(e.target.value)}>
+                   <option value="US">🇺🇸 United States (Global)</option>
+                   <option value="DE">🇩🇪 Germany (Europe)</option>
+                   <option value="RU">🇷🇺 Russia (Local)</option>
+                   <option value="SG">🇸🇬 Singapore (Asia)</option>
+                </select>
+             </div>
           </div>
-
-          <div className="card space-y-4">
-            <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'С чего начать' : 'How to start'}</h3>
-            <div className="grid gap-3 md:grid-cols-3">
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-300">
-                <p className="text-cyan-300">1</p>
-                <p className="mt-1">{lang === 'ru' ? 'Создайте API-токен во вкладке "Токены".' : 'Create an API token in the Tokens tab.'}</p>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-300">
-                <p className="text-cyan-300">2</p>
-                <p className="mt-1">{lang === 'ru' ? 'Создайте рабочий доступ во вкладке "Доступы".' : 'Create a credential in the Credentials tab.'}</p>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-300">
-                <p className="text-cyan-300">3</p>
-                <p className="mt-1">{lang === 'ru' ? 'Настройте пополнение во вкладке "Платежи".' : 'Set up top-ups in the Billing tab.'}</p>
-              </div>
-            </div>
-          </div>
-        </>
+        </div>
       )}
 
       {activeTab === 'tokens' && (
-        <>
-          <div className="card space-y-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Регистрация токена' : 'Token registration'}</h3>
-                <p className="text-slate-400 text-sm">{lang === 'ru' ? 'Создайте новый API-токен и сохраните его в безопасном месте.' : 'Create a new API token and store it securely.'}</p>
+        <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
+           <div className="card space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                 <div>
+                    <h3 className="text-xl font-bold text-white">{lang === 'ru' ? 'Выпуск API-токена' : 'Issue API Token'}</h3>
+                    <p className="text-sm text-slate-500">{lang === 'ru' ? 'Создайте новый ключ для программного доступа к сети.' : 'Create a new key for programmatic network access.'}</p>
+                 </div>
+                 <button
+                    className="btn-primary !py-2.5 shadow-xl shadow-white/5"
+                    onClick={() => registerTokenMutation.mutate()}
+                    disabled={registerTokenMutation.isPending || !sessionToken}
+                  >
+                    {registerTokenMutation.isPending ? '...' : (lang === 'ru' ? 'Сгенерировать ключ' : 'Generate Key')}
+                 </button>
               </div>
-            </div>
 
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">{lang === 'ru' ? 'Метка токена' : 'Token label'}</label>
-                <input
-                  className="input"
-                  value={newTokenLabel}
-                  onChange={(e) => setNewTokenLabel(e.target.value)}
-                  placeholder={lang === 'ru' ? 'prod-parser-01' : 'prod-parser-01'}
-                />
+              <div className="grid gap-4 md:grid-cols-2">
+                 <input
+                    className="input text-sm"
+                    value={newTokenLabel}
+                    onChange={(e) => setNewTokenLabel(e.target.value)}
+                    placeholder={lang === 'ru' ? 'Метка (например, PROD-01)' : 'Label (e.g. PROD-01)'}
+                 />
+                 <select className="input text-sm" value={country} onChange={(e) => setCountry(e.target.value)}>
+                    <option value="US">USA</option>
+                    <option value="DE">Germany</option>
+                    <option value="RU">Russia</option>
+                    <option value="SG">Singapore</option>
+                 </select>
               </div>
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">Country</label>
-                <select className="input" value={country} onChange={(e) => setCountry(e.target.value)}>
-                  <option>US</option>
-                  <option>DE</option>
-                  <option>RU</option>
-                  <option>SG</option>
-                </select>
-              </div>
-            </div>
 
-            <div>
-              <button
-                className="btn-primary disabled:opacity-60"
-                onClick={() => registerTokenMutation.mutate()}
-                disabled={registerTokenMutation.isPending || !sessionToken}
-              >
-                {registerTokenMutation.isPending
-                  ? (lang === 'ru' ? 'Регистрация...' : 'Registering...')
-                  : (lang === 'ru' ? 'Зарегистрировать токен' : 'Register token')}
-              </button>
-            </div>
-
-            {registerTokenMutation.isError && (
-              <p className="text-red-400">Error: {(registerTokenMutation.error as Error).message}</p>
-            )}
-            {registerTokenMutation.isSuccess && (
-              <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-                <div className="mb-2 font-semibold">{lang === 'ru' ? 'Токен создан' : 'Token created'}</div>
-                <div className="space-y-1">
-                  <div className="font-mono">token: {registerTokenMutation.data.token}</div>
-                  <div className="font-mono">username: {registerTokenMutation.data.username}</div>
-                  <div className="font-mono">proxy: {registerTokenMutation.data.proxy_host}:{registerTokenMutation.data.proxy_port}</div>
+              {registerTokenMutation.isSuccess && (
+                <div className="p-6 rounded-2xl bg-accent/5 border border-accent/20 space-y-4 animate-in zoom-in-95">
+                  <div className="flex items-center gap-2 text-accent">
+                     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                     <span className="font-bold text-sm uppercase tracking-widest">{lang === 'ru' ? 'Ключ успешно создан' : 'Token successfully issued'}</span>
+                  </div>
+                  <div className="grid gap-3 font-mono text-xs text-slate-300">
+                    <div className="p-3 bg-black/40 rounded-lg border border-white/5 break-all select-all">{registerTokenMutation.data.token}</div>
+                  </div>
+                  <p className="text-[10px] text-amber-400 font-bold uppercase">{lang === 'ru' ? 'Скопируйте сейчас. Токен не будет показан повторно.' : 'Copy now. The token will not be shown again.'}</p>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+           </div>
 
-          <div className="card space-y-3">
-            <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Зарегистрированные токены' : 'Registered tokens'}</h3>
-            {businessTokensQuery.isLoading && <p className="text-slate-400">{lang === 'ru' ? 'Загрузка...' : 'Loading...'}</p>}
-            {businessTokensQuery.isError && <p className="text-red-400">Error: {(businessTokensQuery.error as Error).message}</p>}
-            {businessTokensQuery.data && businessTokensQuery.data.length === 0 && (
-              <p className="text-slate-400">{lang === 'ru' ? 'Пока нет токенов. Зарегистрируйте первый.' : 'No tokens yet. Register your first one.'}</p>
-            )}
-            {businessTokensQuery.data && businessTokensQuery.data.length > 0 && (
+           <div className="card space-y-6">
+              <h3 className="text-lg font-bold text-white">{lang === 'ru' ? 'Реестр токенов' : 'Token Registry'}</h3>
               <div className="overflow-x-auto">
-                <table className="table min-w-[680px]">
-                  <thead>
-                    <tr>
-                      <th>{lang === 'ru' ? 'Логин' : 'Username'}</th>
-                      <th>{lang === 'ru' ? 'Метка' : 'Label'}</th>
-                      <th>{lang === 'ru' ? 'Создан' : 'Created'}</th>
-                      <th>{lang === 'ru' ? 'Действие' : 'Action'}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {businessTokensQuery.data.map((tokenItem) => (
-                      <tr key={tokenItem.credential_id}>
-                        <td className="font-mono text-slate-200">{tokenItem.username}</td>
-                        <td className="text-slate-300">{tokenItem.label ?? '—'}</td>
-                        <td className="text-slate-400">{new Date(tokenItem.created_at).toLocaleString()}</td>
-                        <td>
-                          <button
-                            className="btn-ghost !px-2 !py-1 !text-xs"
-                            onClick={() => revokeTokenMutation.mutate(tokenItem.credential_id)}
-                            disabled={revokeTokenMutation.isPending}
-                          >
-                            {lang === 'ru' ? 'Отозвать' : 'Revoke'}
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                 <table className="w-full text-left">
+                    <thead>
+                       <tr>
+                          <th className="table-header">{lang === 'ru' ? 'Идентификатор' : 'Identifier'}</th>
+                          <th className="table-header">{lang === 'ru' ? 'Метка' : 'Label'}</th>
+                          <th className="table-header">{lang === 'ru' ? 'Дата создания' : 'Created At'}</th>
+                          <th className="table-header text-right">{lang === 'ru' ? 'Управление' : 'Actions'}</th>
+                       </tr>
+                    </thead>
+                    <tbody>
+                       {businessTokensQuery.data?.map((t) => (
+                         <tr key={t.credential_id}>
+                            <td className="table-cell font-mono text-xs">{t.username}</td>
+                            <td className="table-cell">{t.label || '—'}</td>
+                            <td className="table-cell text-slate-500">{new Date(t.created_at).toLocaleDateString()}</td>
+                            <td className="table-cell text-right">
+                               <button 
+                                  onClick={() => revokeTokenMutation.mutate(t.credential_id)}
+                                  className="text-red-500/50 hover:text-red-500 text-[10px] uppercase font-bold tracking-widest transition-colors"
+                               >
+                                  {lang === 'ru' ? 'Отозвать' : 'Revoke'}
+                               </button>
+                            </td>
+                         </tr>
+                       ))}
+                    </tbody>
+                 </table>
               </div>
-            )}
-          </div>
-        </>
+           </div>
+        </div>
       )}
 
       {activeTab === 'credentials' && (
-        <>
-          <div className="card space-y-3">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Выдача рабочего доступа' : 'Issue operational credential'}</h3>
-                <p className="text-slate-400 text-sm">{lang === 'ru' ? 'Создайте учетные данные с выбором региона.' : 'Create credential with region selection.'}</p>
+        <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
+           {/* Credentials implementation upgraded similarly... */}
+           <div className="card space-y-6">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                 <div>
+                    <h3 className="text-xl font-bold text-white">{lang === 'ru' ? 'Выдача доступа' : 'Issue Credential'}</h3>
+                    <p className="text-sm text-slate-500">{lang === 'ru' ? 'Создайте учетные данные для SOCKS5/HTTP прокси.' : 'Create credentials for SOCKS5/HTTP proxy.'}</p>
+                 </div>
+                 <button
+                    className="btn-primary !py-2.5"
+                    onClick={() => createMutation.mutate({ label: newCredLabel || undefined, country })}
+                    disabled={createMutation.isPending || !enabled}
+                  >
+                    {createMutation.isPending ? '...' : (lang === 'ru' ? 'Создать' : 'Create')}
+                 </button>
               </div>
-              {!enabled && <span className="text-xs text-slate-500">{lang === 'ru' ? 'Сначала укажите токен' : 'Provide token first'}</span>}
-            </div>
-
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">Метка</label>
-                <input
-                  className="input"
-                  value={newCredLabel}
-                  onChange={(e) => setNewCredLabel(e.target.value)}
-                  placeholder="crawler-eu-1"
-                />
+              <div className="grid gap-4 md:grid-cols-2">
+                 <input
+                    className="input text-sm"
+                    value={newCredLabel}
+                    onChange={(e) => setNewCredLabel(e.target.value)}
+                    placeholder="Label (e.g. Crawler-DE)"
+                 />
+                 <select className="input text-sm" value={country} onChange={(e) => setCountry(e.target.value)}>
+                    <option value="US">USA</option>
+                    <option value="DE">Germany</option>
+                    <option value="RU">Russia</option>
+                    <option value="SG">Singapore</option>
+                 </select>
               </div>
-              <div className="space-y-1">
-                <label className="text-sm text-slate-300">Country</label>
-                <select className="input" value={country} onChange={(e) => setCountry(e.target.value)}>
-                  <option>US</option>
-                  <option>DE</option>
-                  <option>RU</option>
-                  <option>SG</option>
-                </select>
-              </div>
-            </div>
 
-            <div>
-              <button
-                className="btn-primary disabled:opacity-60"
-                onClick={() => createMutation.mutate({ label: newCredLabel || undefined, country })}
-                disabled={createMutation.isPending || !enabled}
-              >
-                {createMutation.isPending ? (lang === 'ru' ? 'Создание...' : 'Creating...') : (lang === 'ru' ? 'Создать доступ' : 'Create credential')}
-              </button>
-            </div>
-
-            {createMutation.isError && (
-              <p className="text-red-400">Error: {(createMutation.error as Error).message}</p>
-            )}
-            {createMutation.isSuccess && (
-              <div className="rounded-xl border border-emerald-400/40 bg-emerald-500/10 p-4 text-sm text-emerald-100">
-                <div className="mb-2 font-semibold">{lang === 'ru' ? 'Доступ выдан' : 'Credential issued'}</div>
-                <div className="space-y-1">
-                  <div className="font-mono">username: {createMutation.data.username}</div>
-                  <div className="font-mono">password: {createMutation.data.password}</div>
-                  <div className="font-mono">proxy: {createMutation.data.proxy_host}:{createMutation.data.proxy_port}</div>
+              {createMutation.isSuccess && (
+                <div className="p-6 rounded-2xl bg-white/5 border border-white/10 space-y-4 animate-in zoom-in-95">
+                  <div className="grid grid-cols-2 gap-4">
+                     <CredentialItem label="Username" value={createMutation.data.username} />
+                     <CredentialItem label="Password" value={createMutation.data.password} />
+                     <CredentialItem label="Proxy Host" value={createMutation.data.proxy_host} />
+                     <CredentialItem label="Proxy Port" value={createMutation.data.proxy_port.toString()} />
+                  </div>
                 </div>
-              </div>
-            )}
-          </div>
+              )}
+           </div>
 
-          <div className="card space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Выданные доступы' : 'Issued credentials'}</h3>
-            </div>
-            {credentialsQuery.isLoading && <p className="text-slate-400">{lang === 'ru' ? 'Загрузка...' : 'Loading...'}</p>}
-            {credentialsQuery.isError && <p className="text-red-400">Error: {(credentialsQuery.error as Error).message}</p>}
-            {credentialsQuery.data && credentialsQuery.data.length === 0 && (
-              <p className="text-slate-400">{lang === 'ru' ? 'Пока нет выданных доступов. Создайте первый.' : 'No credentials yet. Create your first one.'}</p>
-            )}
-            {credentialsQuery.data && credentialsQuery.data.length > 0 && (
+           <div className="card space-y-6">
+              <h3 className="text-lg font-bold text-white">{lang === 'ru' ? 'Активные доступы' : 'Active Credentials'}</h3>
               <div className="overflow-x-auto">
-                <table className="table min-w-[640px]">
-                  <thead>
-                    <tr>
-                      <th>{lang === 'ru' ? 'Логин' : 'Username'}</th>
-                      <th>{lang === 'ru' ? 'Метка' : 'Label'}</th>
-                      <th>{lang === 'ru' ? 'Создан' : 'Created'}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {credentialsQuery.data.map((c) => (
-                      <tr key={c.credential_id}>
-                        <td className="font-mono text-slate-200">{c.username}</td>
-                        <td className="text-slate-300">{c.label ?? '—'}</td>
-                        <td className="text-slate-400">{new Date(c.created_at).toLocaleString()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                 <table className="w-full text-left">
+                    <thead>
+                       <tr>
+                          <th className="table-header">Username</th>
+                          <th className="table-header">Label</th>
+                          <th className="table-header">Status</th>
+                       </tr>
+                    </thead>
+                    <tbody>
+                       {credentialsQuery.data?.map((c) => (
+                         <tr key={c.credential_id}>
+                            <td className="table-cell font-mono text-xs">{c.username}</td>
+                            <td className="table-cell">{c.label || '—'}</td>
+                            <td className="table-cell">
+                               <span className="flex items-center gap-1.5 text-[10px] uppercase font-black text-emerald-400">
+                                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.5)]" />
+                                  Active
+                               </span>
+                            </td>
+                         </tr>
+                       ))}
+                    </tbody>
+                 </table>
               </div>
-            )}
-          </div>
-        </>
+           </div>
+        </div>
       )}
 
       {activeTab === 'billing' && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="card space-y-3">
-            <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Баланс и лимиты' : 'Balance and limits'}</h3>
-            {balanceQuery.isLoading && <p className="text-slate-400">{lang === 'ru' ? 'Загрузка...' : 'Loading...'}</p>}
-            {balanceQuery.isError && <p className="text-red-400">Error: {(balanceQuery.error as Error).message}</p>}
-            {balanceQuery.data && (
-              <>
-                <p className="text-4xl font-bold text-white">${balanceQuery.data.balance_usd.toFixed(2)}</p>
-                <p className="text-slate-400 text-sm">client_id: {balanceQuery.data.client_id}</p>
-              </>
-            )}
-            <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4 text-sm text-slate-300">
-              {lang === 'ru'
-                ? 'Рекомендуем настроить автоматическое оповещение о низком балансе (например, при остатке < $20).'
-                : 'Recommended: set automated low-balance alerts (for example, when balance < $20).'}
-            </div>
-          </div>
+        <div className="grid gap-6 md:grid-cols-2 animate-in fade-in duration-500">
+           <div className="card space-y-8 bg-gradient-to-br from-slate-900/40 to-ink">
+              <div>
+                 <h3 className="text-xl font-bold text-white mb-2">{lang === 'ru' ? 'Баланс счета' : 'Account Balance'}</h3>
+                 <p className="text-slate-500 text-sm leading-relaxed">{lang === 'ru' ? 'Средства используются для оплаты трафика ваших узлов и аренды выделенных портов.' : 'Funds are used for your nodes\' traffic and dedicated port leases.'}</p>
+              </div>
+              <div className="space-y-2">
+                 <div className="text-5xl font-display font-bold text-white">${balanceQuery.data?.balance_usd.toFixed(2) ?? '0.00'}</div>
+                 <div className="text-[10px] uppercase tracking-widest text-slate-600 font-bold">Client ID: {balanceQuery.data?.client_id ?? '—'}</div>
+              </div>
+              <button className="btn-ghost w-full !border-white/5 !bg-white/5 text-slate-300 pointer-events-none">
+                 {lang === 'ru' ? 'Пополнение временно через поддержку' : 'Top-up via support currently'}
+              </button>
+           </div>
 
-          <div className="card space-y-3">
-            <h3 className="text-lg font-semibold text-white">{lang === 'ru' ? 'Как организовать прием платежей' : 'How to organize payment acceptance'}</h3>
-            <div className="space-y-3 text-sm text-slate-300">
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-                <p className="font-semibold text-white">{lang === 'ru' ? '1. Ручные пополнения (сейчас)' : '1. Manual top-ups (now)'}</p>
-                <p className="mt-1">{lang === 'ru' ? 'Принимайте переводы по реквизитам и пополняйте баланс клиента через админку.' : 'Accept bank transfers and top up client balances from the admin panel.'}</p>
+           <div className="card space-y-6">
+              <h3 className="text-lg font-bold text-white">{lang === 'ru' ? 'Финансовые операции' : 'Financial Operations'}</h3>
+              <div className="space-y-4">
+                 <OperationOption 
+                    title={lang === 'ru' ? 'Автоматизация' : 'Automation'} 
+                    text={lang === 'ru' ? 'Привязка банковских карт для автоматического пополнения при низком остатке.' : 'Link bank cards for automated top-up on low balance.'}
+                    disabled
+                 />
+                 <OperationOption 
+                    title={lang === 'ru' ? 'Документация' : 'Invoicing'} 
+                    text={lang === 'ru' ? 'Формирование актов и счетов для юридических лиц.' : 'Generate acts and invoices for legal entities.'}
+                    disabled
+                 />
               </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-                <p className="font-semibold text-white">{lang === 'ru' ? '2. Merchant of Record (посредник)' : '2. Merchant of Record'}</p>
-                <p className="mt-1">{lang === 'ru' ? 'Используйте Paddle/Lemon Squeezy/Gumroad как юридического продавца и получателя карт.' : 'Use Paddle/Lemon Squeezy/Gumroad as legal seller of record and card processor.'}</p>
-              </div>
-              <div className="rounded-xl border border-slate-800 bg-slate-900/40 p-4">
-                <p className="font-semibold text-white">{lang === 'ru' ? '3. Позже подключить эквайринг' : '3. Add direct acquiring later'}</p>
-                <p className="mt-1">{lang === 'ru' ? 'Когда будет оформлен юр-статус, подключить Stripe/Т-Банк/ЮKassa напрямую.' : 'Once legal status is ready, connect Stripe/local acquirers directly.'}</p>
-              </div>
-            </div>
-          </div>
+           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function StatsCard({ label, value, sub, highlight }: { label: string, value: string, sub: string, highlight?: boolean }) {
+  return (
+    <div className={`card space-y-3 ${highlight ? 'bg-white/5 border-white/10' : ''}`}>
+       <div className="text-[10px] uppercase tracking-widest font-black text-slate-500">{label}</div>
+       <div className={`text-4xl font-display font-bold ${highlight ? 'text-white' : 'text-slate-200'}`}>{value}</div>
+       <div className="text-[11px] text-slate-500 leading-tight">{sub}</div>
+    </div>
+  );
+}
+
+function CredentialItem({ label, value }: { label: string, value: string }) {
+  return (
+    <div className="space-y-1">
+       <div className="text-[10px] uppercase tracking-widest font-bold text-slate-600">{label}</div>
+       <div className="p-2.5 bg-black/40 border border-white/5 rounded-lg text-xs font-mono text-slate-300 break-all select-all">{value}</div>
+    </div>
+  );
+}
+
+function OperationOption({ title, text, disabled }: { title: string, text: string, disabled?: boolean }) {
+  return (
+    <div className={`p-4 rounded-xl border border-white/5 bg-white/[0.02] ${disabled ? 'opacity-50' : ''}`}>
+       <div className="font-bold text-sm text-white mb-1 flex items-center justify-between">
+          {title}
+          {disabled && <span className="text-[8px] bg-white/10 px-1.5 py-0.5 rounded uppercase tracking-tighter">Planned</span>}
+       </div>
+       <p className="text-xs text-slate-500 leading-relaxed">{text}</p>
     </div>
   );
 }

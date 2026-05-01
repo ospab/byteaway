@@ -11,4 +11,10 @@ abstract class AuthRepository {
 
   /// Check if a valid token exists.
   Future<bool> isLoggedIn();
+
+  /// Register new client with email
+  Future<Map<String, dynamic>> register(String email, {String? referralCode});
+
+  /// Login with email (get token)
+  Future<Map<String, dynamic>> loginWithEmail(String email);
 }

@@ -32,7 +32,7 @@ class LogScreen extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.delete_sweep),
             tooltip: 'Clear logs',
-            onPressed: AppLogger.clear,
+            onPressed: () => AppLogger.clear(),
           ),
         ],
       ),
@@ -40,24 +40,37 @@ class LogScreen extends StatelessWidget {
         stream: AppLogger.logStream,
         initialData: AppLogger.currentLogs,
         builder: (context, snapshot) {
-          final logs = (snapshot.data ?? const <String>[]).join('\n');
-          return ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              const Text(
-                'APP LOGGER',
-                style: TextStyle(color: Colors.white54, fontSize: 11, letterSpacing: 1.2),
+          final logs = snapshot.data ?? [];
+          if (logs.isEmpty) {
+            return const Center(
+              child: Text(
+                'No logs captured yet.',
+                style: TextStyle(color: Colors.white54),
               ),
-              const SizedBox(height: 8),
-              SelectableText(
-                logs.isEmpty ? 'No app logs captured yet.' : logs,
-                style: const TextStyle(
-                  color: Colors.white70,
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                ),
+            );
+          }
+
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 960),
+              child: ListView.separated(
+                padding: const EdgeInsets.all(16),
+                itemCount: logs.length,
+                separatorBuilder: (context, index) =>
+                    const Divider(color: Colors.white10),
+                itemBuilder: (context, index) {
+                  final log = logs[index];
+                  return SelectableText(
+                    log,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 12,
+                      fontFamily: 'monospace',
+                    ),
+                  );
+                },
               ),
-            ],
+            ),
           );
         },
       ),

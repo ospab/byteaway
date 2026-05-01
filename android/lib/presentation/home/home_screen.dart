@@ -9,6 +9,7 @@ import '../theme/app_theme.dart';
 import '../widgets/glass_scaffold.dart';
 import '../widgets/status_card.dart';
 import '../widgets/vpn_toggle_button.dart';
+import '../settings/settings_cubit.dart';
 import 'home_cubit.dart';
 import 'home_state.dart';
 
@@ -283,13 +284,19 @@ class _HomeScreenState extends State<HomeScreen> {
       body: BlocBuilder<HomeCubit, HomeState>(
         builder: (context, state) {
           final width = MediaQuery.of(context).size.width;
-          final isWide = width >= 1000;
+          final isNarrow = width < 380;
+          final isWide = width >= 600;
 
           return SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              child: isWide
-                  ? Row(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1100),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: isNarrow ? 14 : 20),
+                    child: isWide
+                        ? Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Expanded(
@@ -342,7 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ],
                     )
-                  : Column(
+                        : Column(
                       children: [
                         _buildHeader(context),
                         const SizedBox(height: 40),
@@ -374,6 +381,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 40),
                       ],
                     ),
+                  ),
+                ),
+              ),
             ),
           );
         },
@@ -452,19 +462,79 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildHeader(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final width = MediaQuery.of(context).size.width;
+    final isNarrow = width < 380;
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        ShaderMask(
-          shaderCallback: (bounds) =>
-              AppTheme.primaryGradient.createShader(bounds),
-          child: Text(
-            'ByteAway',
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.w900,
-                  fontSize: 32,
-                  color: Colors.white,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              ShaderMask(
+                shaderCallback: (bounds) =>
+                    AppTheme.primaryGradient.createShader(bounds),
+                child: Text(
+                  'ByteAway',
+                  style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                        fontWeight: FontWeight.w900,
+                        fontSize: isNarrow ? 26 : 34,
+                        color: Colors.white,
+                        letterSpacing: -0.5,
+                      ),
                 ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Premium Network',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.textSecondary.withOpacity(0.6),
+                      letterSpacing: 2,
+                      fontSize: 11,
+                    ),
+              ),
+            ],
+          ),
+        ),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            gradient: AppTheme.cardGradient,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Colors.white.withOpacity(0.08),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: AppTheme.success,
+                  shape: BoxShape.circle,
+                  boxShadow: [
+                    BoxShadow(
+                      color: AppTheme.success,
+                      blurRadius: 6,
+                      spreadRadius: 1,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'ONLINE',
+                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      color: AppTheme.success,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 1,
+                    ),
+              ),
+            ],
           ),
         ),
       ],
@@ -516,9 +586,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final hours = (safe % 86400) ~/ 3600;
     final minutes = (safe % 3600) ~/ 60;
     if (days > 0) {
-      return '$days дн ${hours}ч';
+      return '$days дн $hoursч';
     }
-    return '${hours}ч ${minutes}м';
+    return '$hoursч $minutesм';
   }
 
   String _buildTariffSubtitle(int pendingDays) {

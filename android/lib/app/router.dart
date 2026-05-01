@@ -10,8 +10,10 @@ import '../presentation/settings/settings_screen.dart';
 import '../presentation/statistics/statistics_screen.dart';
 import '../presentation/registration/registration_screen.dart';
 import '../presentation/settings/log_screen.dart';
+import '../presentation/settings/split_tunnel_screen.dart';
+import '../presentation/theme/app_theme.dart';
 
-/// Main app shell with bottom navigation.
+/// Enhanced app shell with animated bottom navigation.
 class AppShell extends StatelessWidget {
   final StatefulNavigationShell navigationShell;
 
@@ -20,30 +22,76 @@ class AppShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: navigationShell,
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          border: Border(
-            top: BorderSide(color: Colors.white.withValues(alpha: 0.05)),
+      body: AnimatedSwitcher(
+        duration: AppTheme.mediumAnimation,
+        switchInCurve: AppTheme.smoothCurve,
+        switchOutCurve: AppTheme.smoothCurve,
+        child: navigationShell,
+      ),
+      bottomNavigationBar: _buildBottomNavigationBar(context),
+    );
+  }
+
+  Widget _buildBottomNavigationBar(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [
+            AppTheme.surface,
+            AppTheme.surface.withOpacity(0.8),
+          ],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
+        ),
+        border: Border(
+          top: BorderSide(
+            color: Colors.white.withOpacity(0.1),
+            width: 1,
           ),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.3),
+            blurRadius: 20,
+            offset: const Offset(0, -5),
+          ),
+        ],
+      ),
+      child: ClipRRect(
+        borderRadius: const BorderRadius.only(
+          topLeft: Radius.circular(20),
+          topRight: Radius.circular(20),
         ),
         child: BottomNavigationBar(
           currentIndex: navigationShell.currentIndex,
-          onTap: (index) => navigationShell.goBranch(index),
+          onTap: (index) {
+            if (index != navigationShell.currentIndex) {
+              navigationShell.goBranch(index);
+            }
+          },
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          type: BottomNavigationBarType.fixed,
+          selectedFontSize: 12,
+          unselectedFontSize: 11,
           items: const [
             BottomNavigationBarItem(
-              icon: Icon(Icons.home_rounded),
-              activeIcon: Icon(Icons.home_rounded),
+              icon: Icon(Icons.home_rounded, size: 24),
+              activeIcon: Icon(Icons.home_rounded, size: 26),
               label: 'Главная',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.bar_chart_rounded),
-              activeIcon: Icon(Icons.bar_chart_rounded),
+              icon: Icon(Icons.bar_chart_rounded, size: 24),
+              activeIcon: Icon(Icons.bar_chart_rounded, size: 26),
               label: 'Статистика',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.settings_rounded),
-              activeIcon: Icon(Icons.settings_rounded),
+              icon: Icon(Icons.settings_rounded, size: 24),
+              activeIcon: Icon(Icons.settings_rounded, size: 26),
               label: 'Настройки',
             ),
           ],
@@ -122,6 +170,10 @@ final GoRouter appRouter = GoRouter(
     GoRoute(
       path: '/logs',
       builder: (context, state) => const LogScreen(),
+    ),
+    GoRoute(
+      path: '/split-tunnel',
+      builder: (context, state) => const SplitTunnelScreen(),
     ),
   ],
 );

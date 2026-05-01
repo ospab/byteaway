@@ -22,7 +22,8 @@ param (
     [string]$ReleaseApkVariant = "universal",
     [int]$MinimumSupportedBuild = 1,
     [int]$GomobileTimeoutMinutes = 30,
-    [int]$GomobileNoOutputTimeoutMinutes = 6
+    [int]$GomobileNoOutputTimeoutMinutes = 6,
+    [string]$ChangelogMessage = "Стабилизация узла, улучшения биллинга и автообновление приложения."
 )
 
 if ($BuildType -notmatch "^(debug|release)$") {
@@ -195,7 +196,6 @@ function Invoke-GomobileBind {
         "bind",
         "-target=$($Targets)",
         "-androidapi", "21",
-        "-tags", "with_utls,with_reality_server,with_quic,with_gvisor",
         "-v",
         "-o", "$AarPath",
         "$PackagePath"
@@ -318,19 +318,24 @@ if (-not $NeedFlutterBuild) {
     $AndroidPath = Join-Path $PSScriptRoot "android"
     Set-Location $AndroidPath
 
+    $flutterBuildExit = 0
+
     if ($BuildType -eq "release") {
         if ($ReleaseApkVariant -eq "arm64") {
             Write-Host "Building arm64-only release APK for smaller OTA downloads..." -ForegroundColor Gray
             flutter build apk --release --target-platform android-arm64
+            $flutterBuildExit = $LASTEXITCODE
         } else {
             Write-Host "Building universal release APK..." -ForegroundColor Gray
             flutter build apk --release
+            $flutterBuildExit = $LASTEXITCODE
         }
     } else {
         flutter build apk --debug
+        $flutterBuildExit = $LASTEXITCODE
     }
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($flutterBuildExit -ne 0) {
         Write-Error "Error building Flutter app!"
         exit 1
     }
@@ -394,11 +399,10 @@ if ($BuildType -eq "release") {
     $ExpiresAt = (Get-Date).ToUniversalTime().AddDays(30).ToString("o")
     $SecurityNonce = [guid]::NewGuid().ToString("N")
 
-    $ReleaseNotes = @(
-        "Стабилизация узла и reconnect логики",
-        "Усилены проверки безопасного обновления",
-        "Улучшена диагностика и контроль целостности APK"
-    )
+    $ReleaseNotes = $ChangelogMessage -split "`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+    if ($ReleaseNotes.Count -eq 0) {
+        $ReleaseNotes = @($ChangelogMessage)
+    }
 
     $MandatoryUpdate = $VersionCode -le $MinimumSupportedBuild
 
@@ -433,7 +437,7 @@ if ($BuildType -eq "release") {
             expires_at = $ExpiresAt
             nonce = $SecurityNonce
         }
-        changelog = "Стабилизация узла, улучшения биллинга и автообновление приложения."
+        changelog = $ChangelogMessage
         mandatory = $MandatoryUpdate
         published_at = $PublishedAt
     } | ConvertTo-Json -Depth 5

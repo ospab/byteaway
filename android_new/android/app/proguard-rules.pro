@@ -1,0 +1,2 @@
+-keep class boxwrapper.** { *; }
+-keep class com.ospab.byteaway.** { *; }

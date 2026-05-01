@@ -56,6 +56,7 @@ pub trait NodeRegistry: Send + Sync {
     async fn remove_node(&self, node_id: Uuid, country: &str) -> Result<(), AppError>;
     async fn find_node(&self, country: Option<&str>, conn_type: Option<ConnectionType>) -> Result<Uuid, AppError>;
     async fn heartbeat(&self, node_id: Uuid) -> Result<(), AppError>;
+    fn active_connections(&self) -> &Arc<DashMap<Uuid, ActiveConnection>>;
 }
 
 pub struct RedisNodeRegistry {
@@ -187,9 +188,19 @@ impl NodeRegistry for RedisNodeRegistry {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await.map_err(AppError::Redis)?;
         let exists: bool = conn.expire(Self::live_key(node_id), 60).await.map_err(AppError::Redis)?;
         if !exists {
-            return Err(AppError::NodeOffline);
+            if let Some(entry) = self.active_connections.get(&node_id) {
+                let meta_json = serde_json::to_string(&entry.meta)
+                    .map_err(|e| AppError::Unexpected(anyhow::anyhow!(e)))?;
+                let _: () = conn.set_ex(Self::live_key(node_id), meta_json, 60).await.map_err(AppError::Redis)?;
+            } else {
+                return Err(AppError::NodeOffline);
+            }
         }
         debug!("Heartbeat for node {}", node_id);
         Ok(())
+    }
+
+    fn active_connections(&self) -> &Arc<DashMap<Uuid, ActiveConnection>> {
+        &self.active_connections
     }
 }
