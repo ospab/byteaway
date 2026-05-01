@@ -9,7 +9,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{info, warn};
 use uuid::Uuid;
-use crate::node_manager::registry::{ConnectionType, WsCommand, NodeMetadata};
+use crate::node_manager::registry::{ConnectionType, TunnelCommand, NodeMetadata};
 use sqlx::Row;
 
 use ostp_core::{NoiseRole, ProtocolAction, ProtocolConfig, ProtocolMachine, OstpEvent};
@@ -123,7 +123,7 @@ impl OstpDispatcher {
                             let node_id = auth_ctx.client_id;
                             info!("OSTP Node {} registered via session {}", node_id, ostp_session_id);
                             
-                            let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(1024);
+                            let (cmd_tx, mut cmd_rx) = mpsc::channel::<TunnelCommand>(1024);
                             let ct = if conn_type.to_lowercase() == "wifi" { ConnectionType::WiFi } else { ConnectionType::Mobile };
                             
                             let meta = NodeMetadata {
@@ -132,6 +132,7 @@ impl OstpDispatcher {
                                 country: country.clone(),
                                 connection_type: ct,
                                 speed_mbps: 50,
+                                tunnel_protocol: "OSTP".to_string(),
                             };
 
                             NodeRegistry::register_node(&*self.app_state.registry, meta, cmd_tx).await.map_err(|e| anyhow!(e))?;
@@ -158,7 +159,7 @@ impl OstpDispatcher {
                             tokio::spawn(async move {
                                 while let Some(cmd) = cmd_rx.recv().await {
                                     match cmd {
-                                        WsCommand::Open { session_id, target_addr, reply_tx } => {
+                                        TunnelCommand::Open { session_id, target_addr, reply_tx } => {
                                             let mut ps = peer_state_inner.lock().await;
                                             let stream_id = ps.next_stream_id;
                                             ps.next_stream_id += 1;
@@ -184,7 +185,7 @@ impl OstpDispatcher {
                                                 }
                                             }
                                         }
-                                        WsCommand::Data { session_id, payload } => {
+                                        TunnelCommand::Data { session_id, payload } => {
                                             let mut ps = peer_state_inner.lock().await;
                                             if let Some(&stream_id) = ps.rev_streams.get(&session_id) {
                                                 let relay_msg = RelayMessage::Data(payload);
@@ -196,7 +197,7 @@ impl OstpDispatcher {
                                                 }
                                             }
                                         }
-                                        WsCommand::Close { session_id } => {
+                                        TunnelCommand::Close { session_id } => {
                                             let mut ps = peer_state_inner.lock().await;
                                             if let Some(stream_id) = ps.rev_streams.remove(&session_id) {
                                                 ps.streams.remove(&stream_id);

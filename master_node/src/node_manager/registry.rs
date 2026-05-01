@@ -15,6 +15,7 @@ pub struct NodeMetadata {
     pub country: String,
     pub connection_type: ConnectionType,
     pub speed_mbps: u32,
+    pub tunnel_protocol: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -24,7 +25,7 @@ pub enum ConnectionType {
 }
 
 /// Команды, которые роутер посылает в WebSocket-хендлер конкретной ноды
-pub enum WsCommand {
+pub enum TunnelCommand {
     /// Открыть туннель к целевому адресу
     Open {
         session_id: Uuid,
@@ -45,14 +46,14 @@ pub enum WsCommand {
 
 /// Живое WS-соединение с мобильной нодой, хранится в DashMap
 pub struct ActiveConnection {
-    pub tx: mpsc::Sender<WsCommand>,
+    pub tx: mpsc::Sender<TunnelCommand>,
     pub meta: NodeMetadata,
     pub active_sessions: AtomicU32,
 }
 
 #[async_trait::async_trait]
 pub trait NodeRegistry: Send + Sync {
-    async fn register_node(&self, meta: NodeMetadata, tx: mpsc::Sender<WsCommand>) -> Result<(), AppError>;
+    async fn register_node(&self, meta: NodeMetadata, tx: mpsc::Sender<TunnelCommand>) -> Result<(), AppError>;
     async fn remove_node(&self, node_id: Uuid, country: &str) -> Result<(), AppError>;
     async fn find_node(&self, country: Option<&str>, conn_type: Option<ConnectionType>) -> Result<Uuid, AppError>;
     async fn heartbeat(&self, node_id: Uuid) -> Result<(), AppError>;
@@ -84,7 +85,7 @@ impl RedisNodeRegistry {
 
 #[async_trait::async_trait]
 impl NodeRegistry for RedisNodeRegistry {
-    async fn register_node(&self, meta: NodeMetadata, tx: mpsc::Sender<WsCommand>) -> Result<(), AppError> {
+    async fn register_node(&self, meta: NodeMetadata, tx: mpsc::Sender<TunnelCommand>) -> Result<(), AppError> {
         let mut conn = self.redis_client.get_multiplexed_async_connection().await.map_err(AppError::Redis)?;
 
         let meta_json = serde_json::to_string(&meta)
@@ -106,8 +107,9 @@ impl NodeRegistry for RedisNodeRegistry {
             active_sessions: AtomicU32::new(0),
         });
 
-        info!("Node {} registered [{}] country={}", meta.node_id, 
+        info!("Node {} registered [{}] protocol={} country={}", meta.node_id, 
               if meta.connection_type == ConnectionType::WiFi { "WiFi" } else { "Mobile" },
+              meta.tunnel_protocol,
               meta.country);
         Ok(())
     }

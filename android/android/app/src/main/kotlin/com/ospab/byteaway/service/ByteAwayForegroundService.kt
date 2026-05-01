@@ -56,7 +56,7 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
         const val EXTRA_EXCLUDE_PKG = "com.byteaway.EXTRA_EXCLUDE_PKG"
 
         const val EXTRA_VPN_CONFIG = "com.byteaway.EXTRA_VPN_CONFIG"
-        const val DEFAULT_NODE_WS_URL = "wss://byteaway.ospab.host/ws"
+        const val DEFAULT_NODE_WS_URL = "wss://byteaway.xyz/ws"
 
         // Wire protocol constants (match master_node/ws_tunnel.rs)
         const val CMD_CONNECT: Byte = 0x01
@@ -307,6 +307,8 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
 
                 val finalConfig = if (vlessLink.startsWith("vless://")) {
                     wrapVlessToJson(vlessLink, tier, maxSpeedMbps, fd)
+                } else if (vlessLink.startsWith("hy2://")) {
+                    wrapHy2ToJson(vlessLink, tier, maxSpeedMbps, fd)
                 } else {
                     vlessLink.replace("\"interface_name\": \"tun0\",", "\"interface_name\": \"tun0\",\n              \"file_descriptor\": $fd,")
                 }
@@ -344,10 +346,6 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
         }
     }
 
-    private fun parseDeviceIpFromConfig(config: String): String? {
-        val regex = "ip=([0-9]{1,3}(?:\\.[0-9]{1,3}){3})".toRegex()
-        return regex.find(config)?.groupValues?.get(1)
-    }
 
     private fun wrapVlessToJson(vlessLink: String, tier: String = "free", maxSpeedMbps: Int = 10, fd: Int = -1): String {
         // Simple VLESS -> sing-box JSON wrapper
@@ -358,7 +356,7 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
         val uuid = if (atIndex != -1) uriStr.substring(0, atIndex) else ""
         val hostAndPort = if (atIndex != -1) {
             if (queryIndex != -1) uriStr.substring(atIndex + 1, queryIndex) else uriStr.substring(atIndex + 1)
-        } else "byteaway.ospab.host:443"
+        } else "byteaway.xyz:443"
 
         val hostParts = hostAndPort.split(":")
         val host = hostParts[0]
@@ -393,13 +391,11 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
               "type": "tun",
               "tag": "tun-in",
               "interface_name": "tun0",
-              "inet4_address": "172.19.0.1/30"$fdConfig,
+              "address": [ "172.19.0.1/30" ]$fdConfig,
               "mtu": 1500,
               "auto_route": false,
               "strict_route": false,
-              "stack": "system",
-              "sniff": true,
-              "sniff_override_destination": true
+              "stack": "system"
             }
           ],
           "outbounds": [
@@ -423,9 +419,107 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
             },
             { "type": "direct", "tag": "direct-out" }
           ],
+          "dns": {
+            "servers": [
+              {
+                "tag": "dns-remote",
+                "type": "udp",
+                "server": "1.1.1.1"
+              }
+            ]
+          },
           "route": {
-             "auto_detect_interface": true,
-             "final": "vless-out"
+             "auto_detect_interface": false,
+             "final": "vless-out",
+             "rules": [
+               { "action": "sniff" },
+               { "protocol": "dns", "action": "hijack-dns" },
+               { "action": "sniff" }
+             ]
+          }
+        }
+        """.trimIndent()
+
+    }
+
+    private fun wrapHy2ToJson(hy2Link: String, tier: String = "free", maxSpeedMbps: Int = 10, fd: Int = -1): String {
+        val uriStr = hy2Link.removePrefix("hy2://")
+        val atIndex = uriStr.indexOf('@')
+        val queryIndex = uriStr.indexOf('?')
+        
+        val password = if (atIndex != -1) uriStr.substring(0, atIndex) else ""
+        val hostAndPort = if (atIndex != -1) {
+            if (queryIndex != -1) uriStr.substring(atIndex + 1, queryIndex) else uriStr.substring(atIndex + 1)
+        } else "byteaway.xyz:4433"
+
+        val hostParts = hostAndPort.split(":")
+        val host = hostParts[0]
+        val port = if (hostParts.size > 1) hostParts[1].toIntOrNull() ?: 4433 else 4433
+
+        val params = mutableMapOf<String, String>()
+        if (queryIndex != -1) {
+            val query = uriStr.substring(queryIndex + 1).split("#")[0]
+            query.split("&").forEach { part ->
+                val pair = part.split("=")
+                if (pair.size == 2) params[pair[0]] = pair[1]
+            }
+        }
+        val sni = params["sni"] ?: host
+        
+        android.util.Log.i(
+            "ByteAway",
+            "Parsed HY2: host=$host port=$port sni=$sni tier=$tier maxSpeed=${maxSpeedMbps}Mbps fd=$fd"
+        )
+        
+        val fdConfig = if (fd > 0) ",\n              \"file_descriptor\": $fd" else ""
+
+        return """
+        {
+          "log": { "level": "info" },
+          "inbounds": [
+            {
+              "type": "tun",
+              "tag": "tun-in",
+              "interface_name": "tun0",
+              "address": [ "172.19.0.1/30" ]$fdConfig,
+              "mtu": 1500,
+              "auto_route": false,
+              "strict_route": false,
+              "stack": "system"
+            }
+          ],
+          "outbounds": [
+            {
+              "type": "hysteria2",
+              "tag": "hy2-out",
+              "server": "$host",
+              "server_port": $port,
+              "password": "$password",
+              "tls": {
+                "enabled": true,
+                "server_name": "$sni",
+                "insecure": true
+              }
+            },
+            { "type": "direct", "tag": "direct-out" }
+          ],
+          "dns": {
+            "servers": [
+              {
+                "tag": "dns-remote",
+                "type": "udp",
+                "server": "1.1.1.1"
+              }
+            ]
+          },
+          "route": {
+             "auto_detect_interface": false,
+             "final": "hy2-out",
+             "rules": [
+               { "action": "sniff" },
+               { "protocol": "dns", "action": "hijack-dns" },
+               { "action": "sniff" }
+             ]
           }
         }
         """.trimIndent()
@@ -454,7 +548,7 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
                 isVpnRunning.set(false)
                 if (!isNodeActive.get()) {
                     stopForeground(STOP_FOREGROUND_REMOVE)
-                    stopSelf()
+                    // stopSelf()
                 } else {
                     updateNotification()
                 }
@@ -484,71 +578,101 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
     ) {
         try {
             if (isNodeActive.get() || isNodeConnecting.get()) {
-            android.util.Log.d("ByteAway", "Node already active or connecting, skipping startNode")
-            return
-        }
+                android.util.Log.d("ByteAway", "Node already active or connecting, skipping startNode")
+                return
+            }
 
             android.util.Log.i(
                 "ByteAway",
                 "startNode invoked: deviceId=$deviceId country=$country connType=$connType transport=$transportMode speed=$speedMbps mtu=$mtu"
             )
 
-        isNodeConnecting.set(true)
-        startForeground(NOTIFICATION_ID, buildNotification("Подключение к мастер ноде..."))
-        acquireWakeLock()
-        nodeStartTime = System.currentTimeMillis()
+            isNodeConnecting.set(true)
+            startForeground(NOTIFICATION_ID, buildNotification("Подключение к мастер ноде..."))
+            acquireWakeLock()
+            nodeStartTime = System.currentTimeMillis()
 
-        val baseWsUrl = masterWsUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_NODE_WS_URL
-        val normalizedWsUrl = if (baseWsUrl.endsWith("/ws")) baseWsUrl else baseWsUrl.trimEnd('/') + "/ws"
-        val normalizedConnType = when (connType.trim().lowercase(Locale.ROOT)) {
-            "cellular", "mobile", "lte", "5g", "4g", "3g" -> "mobile"
-            else -> "wifi"
-        }
-
-        val wsUrl = normalizedWsUrl +
-            "?device_id=$deviceId" +
-            "&token=$token" +
-            "&country=$country" +
-            "&conn_type=$normalizedConnType" +
-            "&speed_mbps=$speedMbps"
-
-        android.util.Log.i("ByteAway", "Connecting node websocket: $wsUrl")
-
-        val request = Request.Builder()
-            .url(wsUrl)
-            .build()
-
-            webSocket = httpClient.newWebSocket(request, object : WebSocketListener() {
-            override fun onOpen(webSocket: WebSocket, response: Response) {
-                isNodeActive.set(true)
-                isNodeConnecting.set(false)
-                nodeErrorMessage = null
-                reconnectAttempts = 0
-                broadcastState()
-                updateNotification()
-                android.util.Log.i("ByteAway", "WebSocket connected successfully")
+            val baseWsUrl = masterWsUrl?.takeIf { it.isNotBlank() } ?: DEFAULT_NODE_WS_URL
+            val normalizedConnType = when (connType.trim().lowercase(Locale.ROOT)) {
+                "cellular", "mobile", "lte", "5g", "4g", "3g" -> "mobile"
+                else -> "wifi"
             }
 
-            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
-                handleIncomingFrame(bytes.toByteArray())
-            }
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val host = try {
+                        val uri = java.net.URI(baseWsUrl)
+                        uri.host ?: "byteaway.xyz"
+                    } catch (_: Exception) {
+                        "byteaway.xyz"
+                    }
 
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
-                android.util.Log.w("ByteAway", "WebSocket closing: code=$code reason=$reason")
-                onNodeDisconnected()
-                scheduleReconnect(token, deviceId, country, normalizedConnType, transportMode, speedMbps, mtu, masterWsUrl)
-            }
+                    android.util.Log.i("ByteAway", "Connecting node transport via Go core: mode=$transportMode host=$host")
+                    
+                    when (transportMode.lowercase(Locale.ROOT)) {
+                        "quic" -> {
+                            val endpoint = "$host:31280"
+                            Boxwrapper.startNodeQuic(endpoint, deviceId, token, country, normalizedConnType, speedMbps.toLong(), mtu.toLong())
+                        }
+                        "ws" -> {
+                            val wsUrl = (if (baseWsUrl.startsWith("ws")) baseWsUrl else "wss://$host/ws") + 
+                                "?device_id=$deviceId&token=$token&country=$country&conn_type=$normalizedConnType&speed_mbps=$speedMbps"
+                            Boxwrapper.startNodeWs(wsUrl, deviceId, token, country, normalizedConnType, speedMbps.toLong(), "")
+                        }
+                        "tuic" -> {
+                            val endpoint = "$host:31280"
+                            Boxwrapper.startNodeTuic(endpoint, deviceId, token, country, normalizedConnType, speedMbps.toLong(), mtu.toLong())
+                        }
+                        "ostp" -> {
+                            val endpoint = "$host:31280"
+                            Boxwrapper.startNodeOstp(endpoint, deviceId, token, country, normalizedConnType, speedMbps.toLong(), mtu.toLong())
+                        }
+                        else -> {
+                            val endpoint = "$host:31280"
+                            Boxwrapper.startNodeQuic(endpoint, deviceId, token, country, normalizedConnType, speedMbps.toLong(), mtu.toLong())
+                        }
+                    }
 
-            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                nodeErrorMessage = t.message ?: "WebSocket failure"
-                android.util.Log.e("ByteAway", "WebSocket failure: ${t.message}", t)
-                onNodeDisconnected()
-                scheduleReconnect(token, deviceId, country, normalizedConnType, transportMode, speedMbps, mtu, masterWsUrl)
+                    isNodeActive.set(true)
+                    isNodeConnecting.set(false)
+                    nodeErrorMessage = null
+                    reconnectAttempts = 0
+                    withContext(Dispatchers.Main) {
+                        broadcastState()
+                        updateNotification()
+                    }
+                    android.util.Log.i("ByteAway", "Node connected successfully via Go core ($transportMode)")
+
+                    // Polling reader loop for Go core
+                    while (isNodeActive.get()) {
+                        try {
+                            val frame = Boxwrapper.readNodeFrame()
+                            if (frame == null || frame.isEmpty()) {
+                                delay(10)
+                                continue
+                            }
+                            withContext(Dispatchers.Main) {
+                                handleIncomingFrame(frame)
+                            }
+                        } catch (e: Exception) {
+                            android.util.Log.e("ByteAway", "Read error from Go core", e)
+                            break
+                        }
+                    }
+                } catch (t: Throwable) {
+                    val trace = android.util.Log.getStackTraceString(t).lineSequence().take(20).joinToString(" | ")
+                    val msg = "startNode error: ${t::class.java.simpleName}: ${t.message ?: ""} [${trace}]"
+                    android.util.Log.e("ByteAway", msg, t)
+                    appendLog(msg)
+                    isNodeConnecting.set(false)
+                    withContext(Dispatchers.Main) {
+                        onNodeDisconnected()
+                    }
+                }
             }
-            })
         } catch (t: Throwable) {
             val trace = android.util.Log.getStackTraceString(t).lineSequence().take(20).joinToString(" | ")
-            val msg = "startNode error: ${t::class.java.simpleName}: ${t.message ?: ""} [${trace}]"
+            val msg = "startNode error outer: ${t::class.java.simpleName}: ${t.message ?: ""} [${trace}]"
             android.util.Log.e("ByteAway", msg, t)
             appendLog(msg)
             isNodeConnecting.set(false)
@@ -559,15 +683,18 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
     private fun stopNode() {
         try {
             isNodeActive.set(false)
-        webSocket?.close(1000, "User stopped sharing")
-        webSocket = null
+            try {
+                Boxwrapper.stopNodeTransport()
+            } catch (_: Exception) {}
+            webSocket?.close(1000, "User stopped sharing")
+            webSocket = null
 
-        // Close all active sessions
-        sessions.values.forEach { channel ->
-            try { channel.close() } catch (_: Exception) {}
-        }
-        sessions.clear()
-        releaseWakeLock()
+            // Close all active sessions
+            sessions.values.forEach { channel ->
+                try { channel.close() } catch (_: Exception) {}
+            }
+            sessions.clear()
+            releaseWakeLock()
 
             if (!isVpnRunning.get()) {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -704,6 +831,9 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
                     channel.write(buffer)
                 }
                 totalBytesShared.addAndGet(payload.size.toLong())
+                withContext(Dispatchers.Main) {
+                    broadcastState()
+                }
             } catch (e: IOException) {
                 handleClose(sessionId)
                 sendFrame(CMD_CLOSE, sessionId, ByteArray(0))
@@ -766,7 +896,14 @@ class ByteAwayForegroundService : VpnService(), SocketProtector {
         frame[0] = cmd
         uuidToBytes(sessionId).copyInto(frame, 1)
         payload.copyInto(frame, 17)
-        webSocket?.send(frame.toByteString(0, frame.size))
+        if (webSocket != null) {
+            webSocket?.send(frame.toByteString(0, frame.size))
+        } else {
+            val sent = Boxwrapper.sendNodeFrame(frame)
+            if (!sent) {
+                android.util.Log.w("ByteAway", "Failed to send frame via Go core")
+            }
+        }
     }
 
     // ──────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ class NodeRepositoryImpl implements NodeRepository {
     int? speedMbps,
     int? mtu,
     String? masterWsUrl,
-    String? coreConfigJson,
+
   }) {
     return _remoteDs.startNode(
       token: token,
@@ -30,7 +30,7 @@ class NodeRepositoryImpl implements NodeRepository {
       speedMbps: speedMbps,
       mtu: mtu,
       masterWsUrl: masterWsUrl,
-      coreConfigJson: coreConfigJson,
+
     );
   }
 

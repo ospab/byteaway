@@ -39,11 +39,12 @@ A persistent foreground service that operates independently of the application's
 - **VPN Control**: Creates and configures the TUN interface via the native `VpnService.Builder`. Configures the IP address (`172.19.0.1`), MTU, and DNS settings. It enforces exception rules via `addDisallowedApplication`.
 - **Traffic Loop Avoidance**: The application's own package name (`com.ospab.byteaway`) is systematically added to the exception list to ensure seamless background communication with the Master Node when the VPN is active.
 - **Node Integration**: Manages and sustains the background connection (QUIC or WebSocket) to the Master Node for relaying client traffic.
+- **Hysteria2 (HY2) Support**: Added integration for Hysteria2 as a testing/hidden VPN protocol. The `ByteAwayForegroundService.kt` includes a `wrapHy2ToJson()` function converting `hy2://` links into Sing-Box configs.
 
 ### 3. Sing-Box Go Integration
 Network operations are managed using the `boxwrapper.aar` library, compiled with Go's `gomobile` tool.
 - Incoming network traffic is directly passed from the Android TUN interface to the `sing-box` core using `Boxwrapper.startSingBox(jsonConfig)`.
-- The configuration JSON is dynamically generated according to the current operational protocol (VLESS or OSTP) and active cryptographic keys.
+- The configuration JSON is dynamically generated according to the current operational protocol (VLESS, Hysteria2 or OSTP) and active cryptographic keys. For Android compatibility, `"auto_detect_interface": false` is enforced in the configuration, and all DNS traffic is intercepted (`hijack-dns`) and routed to the DNS outbound.
 
 ---
 

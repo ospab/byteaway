@@ -12,7 +12,7 @@ use tower_http::services::ServeDir;
 use crate::auth::middleware::require_auth;
 use crate::node_manager::ws_tunnel::{ws_upgrade_handler, TunnelState};
 use crate::state::AppState;
-use super::{app_update, business, business_auth, handlers, monitoring, public, vpn};
+use super::{admin, app_update, business, business_auth, handlers, monitoring, public, vpn};
 
 pub fn build_router(state: Arc<AppState>, tunnel_state: Arc<TunnelState>) -> Router {
     // Публичные эндпоинты мониторинга
@@ -53,6 +53,7 @@ pub fn build_router(state: Arc<AppState>, tunnel_state: Arc<TunnelState>) -> Rou
         .route("/proxies", get(handlers::get_proxies))
         .route("/stats", get(handlers::get_stats))
         .route("/vpn/config", get(handlers::get_vpn_config))
+        .route("/register-device", post(handlers::register_device_dummy))
         .route("/app/update/manifest", get(app_update::get_secure_manifest))
         .route("/app/update/apk", get(app_update::download_secure_apk))
         // B2B proxy credentials management
@@ -62,12 +63,22 @@ pub fn build_router(state: Arc<AppState>, tunnel_state: Arc<TunnelState>) -> Rou
         .layer(middleware::from_fn_with_state(state.clone(), require_auth))
         .with_state(state.clone());
 
+    let admin_routes = Router::new()
+        .route("/stats", get(admin::get_system_stats))
+        .route("/clients", get(admin::list_clients))
+        .route("/devices", get(admin::list_devices))
+        .route("/devices/:device_id/block", post(admin::block_device))
+        .route("/devices/:device_id/unblock", post(admin::unblock_device))
+        .layer(middleware::from_fn_with_state(state.clone(), admin::require_admin_key))
+        .with_state(state.clone());
+
     Router::new()
         .nest("/api/v1/auth", auth_routes)
         .route("/api/v1/business/register", post(business_auth::register_business).with_state(state.clone()))
         .route("/api/v1/business/login", post(business_auth::login_business).with_state(state.clone()))
         .nest("/api/v1/public", public_routes)
         .nest("/api/v1/monitoring", monitoring_routes)
+        .nest("/api/v1/admin", admin_routes)
         .nest("/api/v1", api_routes)
         .nest("/api/v1", vpn_routes)
         .route("/ws", get(ws_upgrade_handler).with_state(tunnel_state))

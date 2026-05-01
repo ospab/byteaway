@@ -35,7 +35,7 @@ class NodeRemoteDataSource {
     int? speedMbps,
     int? mtu,
     String? masterWsUrl,
-    String? coreConfigJson,
+
   }) async {
     debugPrint('ByteAway [Node]: Requesting start sharing (country: $country, connType: ${connType ?? "unknown"}, speed: ${speedMbps ?? AppConstants.defaultSpeedLimitMbps} Mbps)');
     try {
@@ -50,7 +50,7 @@ class NodeRemoteDataSource {
           'speedMbps': speedMbps ?? AppConstants.defaultSpeedLimitMbps,
           'mtu': mtu,
           'masterWsUrl': masterWsUrl,
-          'coreConfigJson': coreConfigJson,
+
         },
       );
       return result ?? false;

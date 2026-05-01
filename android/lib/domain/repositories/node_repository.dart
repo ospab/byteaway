@@ -12,7 +12,7 @@ abstract class NodeRepository {
     int? speedMbps,
     int? mtu,
     String? masterWsUrl,
-    String? coreConfigJson,
+
   });
 
   /// Stop sharing: disconnect from master node.

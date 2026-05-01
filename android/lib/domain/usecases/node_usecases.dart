@@ -16,7 +16,7 @@ class StartNodeUseCase {
     int? speedMbps,
     int? mtu,
     String? masterWsUrl,
-    String? coreConfigJson,
+
   }) {
     return _repository.startNode(
       token: token,
@@ -27,7 +27,7 @@ class StartNodeUseCase {
       speedMbps: speedMbps,
       mtu: mtu,
       masterWsUrl: masterWsUrl,
-      coreConfigJson: coreConfigJson,
+
     );
   }
 }

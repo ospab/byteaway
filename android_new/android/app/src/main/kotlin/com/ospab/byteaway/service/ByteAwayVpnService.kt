@@ -300,7 +300,7 @@ class ByteAwayVpnService : VpnService(), SocketProtector {
             }"""
         } else ""
 
-        val dnsJson = dnsServers.joinToString(separator = ",") { "{\"address\": \"$it\"}" }
+        val dnsJson = dnsServers.joinToString(separator = ",") { "{\"type\": \"udp\", \"server\": \"$it\"}" }
 
         return """
         {
@@ -340,12 +340,11 @@ class ByteAwayVpnService : VpnService(), SocketProtector {
                 }
               }$bandwidth
             },
-            { "type": "dns", "tag": "dns-out" },
             { "type": "direct", "tag": "direct-out" }
           ],
           "route": {
             "final": "vless-out",
-            "rules": [ { "protocol": "dns", "outbound": "dns-out" } ]
+            "rules": [ { "protocol": "dns", "action": "hijack-dns" } ]
           }
         }
         """.trimIndent()

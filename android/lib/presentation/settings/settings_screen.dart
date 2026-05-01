@@ -20,7 +20,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   int _versionTapCount = 0;
   bool _hiddenSettingsUnlocked = false;
-  static const _vpnProtocols = ['vless', 'ostp'];
+  static const _vpnProtocols = ['vless', 'ostp', 'hy2'];
   static const _nodeTransports = ['quic', 'ws'];
 
   @override

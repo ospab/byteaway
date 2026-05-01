@@ -1,4 +1,4 @@
-use super::registry::{NodeMetadata, NodeRegistry, WsCommand, ConnectionType};
+use super::registry::{NodeMetadata, NodeRegistry, TunnelCommand, ConnectionType};
 use crate::state::AppState;
 use axum::extract::ws::{Message, WebSocket};
 use dashmap::DashMap;
@@ -23,30 +23,7 @@ pub struct WsHello {
     pub speed_mbps: Option<u32>,
 }
 
-mod wire {
-    use uuid::Uuid;
-
-    pub const CMD_CONNECT: u8 = 0x01;
-    pub const CMD_DATA: u8 = 0x02;
-    pub const CMD_CLOSE: u8 = 0x03;
-
-    pub fn encode(cmd: u8, session_id: Uuid, payload: &[u8]) -> Vec<u8> {
-        let mut frame = Vec::with_capacity(1 + 16 + payload.len());
-        frame.push(cmd);
-        frame.extend_from_slice(session_id.as_bytes());
-        frame.extend_from_slice(payload);
-        frame
-    }
-
-    pub fn decode(data: &[u8]) -> Option<(u8, Uuid, &[u8])> {
-        if data.len() < 17 {
-            return None;
-        }
-        let cmd = data[0];
-        let sid = Uuid::from_bytes(data[1..17].try_into().ok()?);
-        Some((cmd, sid, &data[17..]))
-    }
-}
+use super::wire;
 
 pub async fn ws_upgrade_handler(
     ws: axum::extract::WebSocketUpgrade,
@@ -118,10 +95,11 @@ pub async fn handle_socket(socket: WebSocket, hello: WsHello, remote_addr: std::
         country: hello.country.clone(),
         connection_type: if hello.conn_type.to_lowercase() == "mobile" { ConnectionType::Mobile } else { ConnectionType::WiFi },
         speed_mbps: hello.speed_mbps.unwrap_or(0),
+        tunnel_protocol: "WS".to_string(),
     };
 
     let country_for_log = meta.country.clone();
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(1024);
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<TunnelCommand>(1024);
     if let Err(e) = state.registry.register_node(meta, cmd_tx).await {
         error!("Failed to register node {}: {:?}", owner_node_id, e);
         return;
@@ -178,7 +156,7 @@ pub async fn handle_socket(socket: WebSocket, hello: WsHello, remote_addr: std::
 
             cmd = cmd_rx.recv() => {
                 match cmd {
-                    Some(WsCommand::Open { session_id, target_addr, reply_tx }) => {
+                    Some(TunnelCommand::Open { session_id, target_addr, reply_tx }) => {
                         let (session_tx, mut session_rx) = mpsc::channel::<Vec<u8>>(1024);
                         tokio::spawn(async move {
                             while let Some(payload) = session_rx.recv().await {
@@ -192,11 +170,11 @@ pub async fn handle_socket(socket: WebSocket, hello: WsHello, remote_addr: std::
                         let frame = wire::encode(wire::CMD_CONNECT, session_id, target_addr.as_bytes());
                         if sink.send(Message::Binary(frame)).await.is_err() { break; }
                     }
-                    Some(WsCommand::Data { session_id, payload }) => {
+                    Some(TunnelCommand::Data { session_id, payload }) => {
                         let frame = wire::encode(wire::CMD_DATA, session_id, &payload);
                         if sink.send(Message::Binary(frame)).await.is_err() { break; }
                     }
-                    Some(WsCommand::Close { session_id }) => {
+                    Some(TunnelCommand::Close { session_id }) => {
                         let frame = wire::encode(wire::CMD_CLOSE, session_id, &[]);
                         let _ = sink.send(Message::Binary(frame)).await;
                         sessions_writer.remove(&session_id);

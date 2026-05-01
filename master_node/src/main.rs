@@ -7,6 +7,7 @@ mod node_manager;
 mod proxy_gateway;
 mod state;
 mod vpn;
+mod singbox_server;
 
 use std::sync::Arc;
 use colored::Colorize;
@@ -22,31 +23,9 @@ use crate::vpn::gateway::{VpnGatewayRegistry, VpnGateway};
 use tokio::net::TcpListener;
 use tracing_subscriber::EnvFilter;
 
-fn print_banner() {
-    let banner = r#"
-    ____        _        _                         
-   | __ ) _   _| |_ ___ / \__      ____ _ _   _   
-   |  _ \| | | | __/ _ / _ \ \ /\ / / _` | | | |  
-   | |_) | |_| | ||  __/ ___ \ V  V / (_| | |_| |  
-   |____/ \__, |\__\___/_/   \_\_/\_/ \__,_|\__, |  
-          |___/                             |___/   
-    "#;
-    
-    // Clear screen for a fresh "elite" start (optional, but professional)
-    print!("\x1B[2J\x1B[1;1H");
-    
-    println!("{}", banner.cyan().bold());
-    println!("{}", " ═════════════════════════════════════════════════════════════".dimmed());
-    println!("  {} {}", "Service:".dimmed(), "ByteAway Residential Proxy Master Node".white().bold());
-    println!("  {} {}    {} {}", "Version:".dimmed(), env!("CARGO_PKG_VERSION").yellow(), "Security:".dimmed(), "VLESS+Reality".green());
-    println!("  {} {}", "Status:".dimmed(), "Operational".bright_green().bold());
-    println!("{}", " ═════════════════════════════════════════════════════════════".dimmed());
-    println!();
-}
+fn print_banner() {}
 
-fn status(icon: &str, label: &str, value: &str) {
-    println!("  {} {} {}", icon, format!("{:<12}", label).dimmed(), value.green().bold());
-}
+fn status(_icon: &str, _label: &str, _value: &str) {}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -54,6 +33,8 @@ async fn main() -> anyhow::Result<()> {
     rustls::crypto::ring::default_provider()
         .install_default()
         .expect("Failed to install default crypto provider");
+
+    dotenvy::dotenv().ok();
 
     // Load config first to check debug mode
     let config = Config::from_env()?;
@@ -159,6 +140,38 @@ async fn main() -> anyhow::Result<()> {
         app_state: app_state.clone(),
     });
 
+    // Start sing-box server
+    let singbox_config_json = singbox_server::generate_singbox_config(
+        &app_state.vpn_public_host,
+        app_state.vpn_port,
+        &app_state.reality_private_key,
+        &app_state.reality_public_key,
+        &app_state.reality_short_id,
+        &app_state.reality_dest,
+        &app_state.vpn_client_uuid,
+        4433, // Default HY2 port
+        "byteaway_hy2_secret", // Default HY2 password
+        &config.node_quic_cert_path,
+        &config.node_quic_key_path,
+    )?;
+
+    let singbox_config_path = "./singbox_config.json";
+    std::fs::write(singbox_config_path, &singbox_config_json)?;
+
+    // Print all listening ports first
+    println!("Master node listening ports:");
+    println!("  - REST API & WebSocket: {}", config.api_port);
+    println!("  - SOCKS5 Proxy: {}", config.socks5_port);
+    if config.node_quic_enabled {
+        println!("  - Node QUIC: {}", config.node_quic_port);
+    }
+    println!("  - Node WS fallback: 5443");
+
+    let mut singbox_server = singbox_server::SingBoxServer::new(singbox_config_path.to_string());
+    if let Err(e) = singbox_server.start().await {
+        tracing::error!("Failed to start sing-box: {:?}", e);
+    }
+
 
     status("✔", "Auth", "authenticator ready");
     status("✔", "VPN Gateways", "registry ready");
@@ -241,12 +254,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
 
-    println!();
-    println!("{}", "═══════════════════════════════════════════════".dimmed());
-    println!("  {} {}", "Status:".dimmed(), "ALL SYSTEMS ONLINE".green().bold());
-    println!("  {} {}", "Hint:".dimmed(), "Press Ctrl+C to shut down".yellow());
-    println!("{}", "═══════════════════════════════════════════════".dimmed());
-    println!();
+
 
 
     // 8. Graceful shutdown
@@ -259,6 +267,7 @@ async fn main() -> anyhow::Result<()> {
     if let Some(h) = quic_handle {
         h.abort();
     }
+    singbox_server.stop().await;
     db_pool.close().await;
 
     println!("  {} {}", "✔".green(), "Master node stopped.".green().bold());

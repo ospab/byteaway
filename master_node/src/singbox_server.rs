@@ -23,18 +23,24 @@ impl SingBoxServer {
         }
 
         // Check if sing-box binary exists
-        let singbox_path = "./sing-box-1.13.11-linux-amd64/sing-box";
-        if !Path::new(singbox_path).exists() {
-            return Err(anyhow!("sing-box binary not found at {}", singbox_path));
+        let mut singbox_path = "./sing-box-1.13.11-linux-amd64/sing-box".to_string();
+        if !Path::new(&singbox_path).exists() {
+            singbox_path = "../sing-box-1.13.11-linux-amd64/sing-box".to_string();
+        }
+        if !Path::new(&singbox_path).exists() {
+            singbox_path = "./sing-box".to_string();
+        }
+        if !Path::new(&singbox_path).exists() {
+            return Err(anyhow!("sing-box binary not found"));
         }
 
         // Make binary executable
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = std::fs::metadata(singbox_path)?.permissions();
+            let mut perms = std::fs::metadata(&singbox_path)?.permissions();
             perms.set_mode(0o755);
-            std::fs::set_permissions(singbox_path, perms)?;
+            std::fs::set_permissions(&singbox_path, perms)?;
             info!("Set executable permissions on {}", singbox_path);
         }
 
@@ -53,7 +59,7 @@ impl SingBoxServer {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let mode = std::fs::metadata(singbox_path)
+                    let mode = std::fs::metadata(&singbox_path)
                         .map(|m| m.permissions().mode() & 0o777)
                         .unwrap_or(0);
                     anyhow!("Failed to spawn sing-box via shell: {}. Binary: {}, Config: {}, File mode: {:o}", e, singbox_path, self.config_path, mode)
@@ -77,7 +83,7 @@ impl SingBoxServer {
     }
 }
 
-pub fn generate_vless_config(
+pub fn generate_singbox_config(
     _public_host: &str,
     public_port: u16,
     reality_private_key: &str,
@@ -85,10 +91,25 @@ pub fn generate_vless_config(
     reality_short_id: &str,
     reality_dest: &str,
     client_uuid: &str,
+    hy2_port: u16,
+    hy2_password: &str,
+    cert_path: &str,
+    key_path: &str,
 ) -> Result<String> {
     let config = json!({
         "log": {
             "level": "info"
+        },
+        "dns": {
+            "servers": [
+                {
+                    "type": "udp",
+                    "tag": "dns-direct",
+                    "server": "1.1.1.1",
+                    "server_port": 53
+                }
+            ],
+            "strategy": "ipv4_only"
         },
         "inbounds": [
             {
@@ -116,6 +137,22 @@ pub fn generate_vless_config(
                         ]
                     }
                 }
+            },
+            {
+                "type": "hysteria2",
+                "tag": "hy2-in",
+                "listen": "::",
+                "listen_port": hy2_port,
+                "users": [
+                    {
+                        "password": hy2_password
+                    }
+                ],
+                "tls": {
+                    "enabled": true,
+                    "certificate_path": cert_path,
+                    "key_path": key_path
+                }
             }
         ],
         "outbounds": [
@@ -123,7 +160,15 @@ pub fn generate_vless_config(
                 "type": "direct",
                 "tag": "direct"
             }
-        ]
+        ],
+        "route": {
+            "rules": [
+                {
+                    "protocol": "dns",
+                    "action": "hijack-dns"
+                }
+            ]
+        }
     });
 
     Ok(serde_json::to_string_pretty(&config)?)

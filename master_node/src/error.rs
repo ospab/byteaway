@@ -38,42 +38,42 @@ impl IntoResponse for AppError {
             AppError::Unauthorized => (
                 StatusCode::UNAUTHORIZED, 
                 "AUTH_FAILED", 
-                "❌ Authentication failed. Check your API key or device token.".to_string()
+                "Authentication failed. Check your API key or device token.".to_string()
             ),
             AppError::BadRequest(msg) => (
                 StatusCode::BAD_REQUEST, 
                 "BAD_REQUEST", 
-                format!("⚠️ Bad request: {}", msg)
+                format!("Bad request: {}", msg)
             ),
             AppError::TooManyRequests => (
                 StatusCode::TOO_MANY_REQUESTS, 
                 "RATE_LIMIT", 
-                "⏳ Too many requests. Please slow down, elite clients don't rush.".to_string()
+                "Too many requests. Please retry after a short delay.".to_string()
             ),
             AppError::InsufficientBalance => (
                 StatusCode::PAYMENT_REQUIRED, 
                 "LOW_BALANCE", 
-                "💸 Insufficient balance. Please top up your account to continue.".to_string()
+                "Insufficient balance. Please top up your account to continue.".to_string()
             ),
             AppError::NodeOffline => (
                 StatusCode::SERVICE_UNAVAILABLE, 
                 "NODES_OFFLINE", 
-                "🔌 No residential nodes available in the selected region right now.".to_string()
+                "No residential nodes available in the selected region.".to_string()
             ),
             AppError::Database(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR, 
                 "DB_ERROR", 
-                "🛠️ Database connection issue. Our engineers are notified.".to_string()
+                "Internal database error.".to_string()
             ),
             AppError::Redis(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR, 
                 "CACHE_ERROR", 
-                "🛠️ Redis/Cache synchronization issue.".to_string()
+                "Internal cache synchronization error.".to_string()
             ),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR, 
-                "UNKNOWN_ERROR", 
-                "💥 An unexpected error occurred on the master node.".to_string()
+                "INTERNAL_ERROR", 
+                "An unexpected internal error occurred.".to_string()
             ),
         };
 
@@ -81,7 +81,6 @@ impl IntoResponse for AppError {
             "status": "error",
             "code": err_code,
             "message": err_msg,
-            "support": "https://t.me/byteaway_support"
         });
 
         (status, axum::Json(body)).into_response()

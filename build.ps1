@@ -196,6 +196,7 @@ function Invoke-GomobileBind {
         "bind",
         "-target=$($Targets)",
         "-androidapi", "21",
+        "-tags", "with_quic,with_utls",
         "-v",
         "-o", "$AarPath",
         "$PackagePath"

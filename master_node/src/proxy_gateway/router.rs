@@ -1,7 +1,7 @@
 use crate::node_manager::registry::NodeRegistry;
 use crate::error::AppError;
 use crate::state::AppState;
-use crate::node_manager::registry::WsCommand;
+use crate::node_manager::registry::TunnelCommand;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -33,18 +33,18 @@ pub async fn route_stream(
     // Канал для получения данных ОТ мобильной ноды
     let (reply_tx, mut reply_rx) = mpsc::channel::<Vec<u8>>(128);
 
-    // Получаем mpsc::Sender<WsCommand> для нужной ноды
+    // Получаем mpsc::Sender<TunnelCommand> для нужной ноды
     let entry = NodeRegistry::active_connections(&*state.registry)
         .get(&node_id)
         .ok_or(AppError::NodeOffline)?;
 
-    let node_tx: mpsc::Sender<WsCommand> = entry.tx.clone();
+    let node_tx: mpsc::Sender<TunnelCommand> = entry.tx.clone();
 
     entry.active_sessions.fetch_add(1, Ordering::Relaxed);
     drop(entry);
 
     // 1. Отправляем команду OPEN в WS-хендлер
-    let send_result: Result<(), mpsc::error::SendError<WsCommand>> = node_tx.send(WsCommand::Open {
+    let send_result: Result<(), mpsc::error::SendError<TunnelCommand>> = node_tx.send(TunnelCommand::Open {
         session_id,
         target_addr: target_addr.to_string(),
         reply_tx,
@@ -54,7 +54,7 @@ pub async fn route_stream(
     // 2. Двунаправленный relay: TCP ↔ WS
     let (mut tcp_reader, mut tcp_writer) = client_stream.into_split();
 
-    let node_tx_data: mpsc::Sender<WsCommand> = node_tx.clone();
+    let node_tx_data: mpsc::Sender<TunnelCommand> = node_tx.clone();
     let sid = session_id;
 
 
@@ -69,7 +69,7 @@ pub async fn route_stream(
         if !initial_data.is_empty() {
             total += initial_data.len() as u64;
             interim += initial_data.len() as u64;
-            let send_result: Result<(), mpsc::error::SendError<WsCommand>> = node_tx_data.send(WsCommand::Data {
+            let send_result: Result<(), mpsc::error::SendError<TunnelCommand>> = node_tx_data.send(TunnelCommand::Data {
                 session_id: sid,
                 payload: initial_data,
             }).await;
@@ -106,7 +106,7 @@ pub async fn route_stream(
             }
 
 
-            let send_result: Result<(), mpsc::error::SendError<WsCommand>> = node_tx_data.send(WsCommand::Data {
+            let send_result: Result<(), mpsc::error::SendError<TunnelCommand>> = node_tx_data.send(TunnelCommand::Data {
                 session_id: sid,
                 payload: buf[..n].to_vec(),
             }).await;
@@ -161,7 +161,7 @@ pub async fn route_stream(
             
             // Client disconnected. Tell the node to close its end IMMEDIATELY
             // to avoid hanging the session for 120s.
-            let _ = node_tx.send(WsCommand::Close { session_id }).await;
+            let _ = node_tx.send(TunnelCommand::Close { session_id }).await;
             
             // Still give a short window for any remaining data from the node (e.g. final HTTP body bytes)
             let down_bytes = match tokio::time::timeout(std::time::Duration::from_secs(5), &mut download).await {
@@ -186,7 +186,7 @@ pub async fn route_stream(
     let total_bytes = upload_bytes + download_bytes;
 
     // 3. Final cleanup ensure (idempotent)
-    let _ = node_tx.send(WsCommand::Close { session_id }).await;
+    let _ = node_tx.send(TunnelCommand::Close { session_id }).await;
 
     if let Some(entry) = NodeRegistry::active_connections(&*state.registry).get(&node_id) {
         entry.active_sessions.fetch_sub(1, Ordering::Relaxed);

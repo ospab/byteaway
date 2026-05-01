@@ -341,11 +341,13 @@ pub async fn get_vpn_config(
         auth.client_id, tier, max_speed_mbps, assigned_ip
     );
 
+    let sni = state.reality_dest.split(':').next().unwrap_or("google.com");
     let link = format!(
-        "vless://{}@{}:{}?encryption=none&security=reality&sni=google.com&fp=chrome&pbk={}&sid={}#ByteAway-VPN",
+        "vless://{}@{}:{}?encryption=none&security=reality&sni={}&fp=chrome&pbk={}&sid={}#ByteAway-VPN",
         state.vpn_client_uuid,
         state.vpn_public_host,
         state.vpn_port,
+        sni,
         state.reality_public_key,
         state.reality_short_id
     );
@@ -358,5 +360,27 @@ pub async fn get_vpn_config(
         dns: vec!["8.8.8.8".to_string(), "1.1.1.1".to_string()],
         tier,
         max_speed_mbps,
+    }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct RegisterDeviceRequest {
+    pub hwid: String,
+    pub device_name: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct RegisterDeviceResponse {
+    pub success: bool,
+    pub is_new: bool,
+}
+
+pub async fn register_device_dummy(
+    State(_state): State<Arc<AppState>>,
+    Json(_payload): Json<RegisterDeviceRequest>,
+) -> Result<Json<RegisterDeviceResponse>, AppError> {
+    Ok(Json(RegisterDeviceResponse {
+        success: true,
+        is_new: false,
     }))
 }

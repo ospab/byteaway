@@ -1,4 +1,4 @@
-use super::registry::{ConnectionType, NodeMetadata, NodeRegistry, WsCommand};
+use super::registry::{ConnectionType, NodeMetadata, NodeRegistry, TunnelCommand};
 use anyhow::{anyhow, Context};
 use dashmap::DashMap;
 use quinn::{Connection, Endpoint, RecvStream, SendStream, ServerConfig};
@@ -71,7 +71,7 @@ async fn handle_connection(conn: Connection, state: Arc<TuicTunnelState>) -> any
 
     let (node_uuid, meta) = authenticate_and_build_meta(&state, &hello, remote).await?;
 
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(1024);
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<TunnelCommand>(1024);
     state
         .registry
         .register_node(meta.clone(), cmd_tx)
@@ -126,7 +126,7 @@ async fn handle_connection(conn: Connection, state: Arc<TuicTunnelState>) -> any
 
                 cmd = cmd_rx.recv() => {
                     match cmd {
-                        Some(WsCommand::Open { session_id, target_addr, reply_tx }) => {
+                        Some(TunnelCommand::Open { session_id, target_addr, reply_tx }) => {
                             let (session_tx, mut session_rx) = mpsc::channel::<Vec<u8>>(1024);
                             tokio::spawn(async move {
                                 while let Some(payload) = session_rx.recv().await {
@@ -140,11 +140,11 @@ async fn handle_connection(conn: Connection, state: Arc<TuicTunnelState>) -> any
                             let frame = wire::encode(wire::CMD_CONNECT, session_id, target_addr.as_bytes());
                             if write_len_prefixed(&mut send, &frame).await.is_err() { break; }
                         }
-                        Some(WsCommand::Data { session_id, payload }) => {
+                        Some(TunnelCommand::Data { session_id, payload }) => {
                             let frame = wire::encode(wire::CMD_DATA, session_id, &payload);
                             if write_len_prefixed(&mut send, &frame).await.is_err() { break; }
                         }
-                        Some(WsCommand::Close { session_id }) => {
+                        Some(TunnelCommand::Close { session_id }) => {
                             let frame = wire::encode(wire::CMD_CLOSE, session_id, &[]);
                             let _ = write_len_prefixed(&mut send, &frame).await;
                             sessions_writer.remove(&session_id);
@@ -229,6 +229,7 @@ async fn authenticate_and_build_meta(
         country: hello.country.clone(),
         connection_type: ct,
         speed_mbps: hello.speed_mbps.unwrap_or(0),
+        tunnel_protocol: "TUIC".to_string(),
     };
 
     Ok((owner_node_id, meta))

@@ -1,4 +1,4 @@
-use super::registry::{ConnectionType, NodeMetadata, NodeRegistry, WsCommand};
+use super::registry::{ConnectionType, NodeMetadata, NodeRegistry, TunnelCommand};
 use anyhow::{anyhow, Context};
 use dashmap::DashMap;
 use std::net::SocketAddr;
@@ -72,6 +72,7 @@ async fn authenticate_and_build_meta(
         country: hello.country.clone(),
         connection_type: conn_type,
         speed_mbps: hello.speed_mbps.unwrap_or(50),
+        tunnel_protocol: "HY2".to_string(),
     };
 
     Ok((node_id, meta))
@@ -143,7 +144,7 @@ async fn handle_connection(
 
     let (node_uuid, meta) = authenticate_and_build_meta(&state, &hello, remote).await?;
 
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<WsCommand>(1024);
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<TunnelCommand>(1024);
     state
         .registry
         .register_node(meta.clone(), cmd_tx)
@@ -190,7 +191,7 @@ async fn handle_connection(
         while let Some(cmd) = cmd_rx.recv().await {
             let mut w = writer_clone.lock().await;
             match cmd {
-                WsCommand::Open { session_id, target_addr, reply_tx } => {
+                TunnelCommand::Open { session_id, target_addr, reply_tx } => {
                     let _ = sessions_writer.insert(session_id, reply_tx);
                     let open_msg = format!("OPEN:{}", target_addr);
                     let frame = wire::encode(wire::CMD_CONNECT, session_id, open_msg.as_bytes());
@@ -198,13 +199,13 @@ async fn handle_connection(
                         break;
                     }
                 }
-                WsCommand::Data { session_id, payload } => {
+                TunnelCommand::Data { session_id, payload } => {
                     let frame = wire::encode(wire::CMD_DATA, session_id, &payload);
                     if write_frame(&mut *w, &frame).await.is_err() {
                         break;
                     }
                 }
-                WsCommand::Close { session_id } => {
+                TunnelCommand::Close { session_id } => {
                     sessions_writer.remove(&session_id);
                     let frame = wire::encode(wire::CMD_CLOSE, session_id, &[]);
                     let _ = write_frame(&mut *w, &frame).await;

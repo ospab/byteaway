@@ -209,7 +209,7 @@ class HomeCubit extends Cubit<HomeState> {
 
         final tier = configMap['tier'] as String? ?? 'free';
         final maxSpeed = configMap['max_speed_mbps'] as int? ?? 0;
-        final payloadForNative = hasCoreConfig
+        var payloadForNative = hasCoreConfig
             ? coreConfigJson!
             : jsonEncode({
                 'vless_link': vlessLink,
@@ -226,12 +226,29 @@ class HomeCubit extends Cubit<HomeState> {
         final vpnProtocol = _authLocalDs.getVpnProtocol();
         AppLogger.log('VPN: using protocol=$vpnProtocol');
 
+        if (vpnProtocol == 'hy2') {
+           AppLogger.log('VPN: HY2 test protocol selected. Constructing HY2 config for testing...');
+           String host = 'byteaway.xyz';
+           if (vlessLink != null && vlessLink.contains('@')) {
+             final parts = vlessLink.split('@');
+             if (parts.length > 1) {
+               host = parts[1].split(':').first.split('?').first;
+             }
+           }
+           payloadForNative = jsonEncode({
+                'vless_link': 'hy2://byteaway_hy2_secret@$host:4433?sni=$host#free',
+                'tier': tier,
+                'max_speed_mbps': maxSpeed,
+           });
+        }
+
         // Pass full JSON config down to the native Kotlin layer
         AppLogger.log(
             'VPN: calling native method, protocol=$vpnProtocol, configLength=${safeConfig.length}');
+        final finalConfig = vpnProtocol == 'hy2' ? payloadForNative : safeConfig;
         final success = vpnProtocol == 'ostp'
-            ? await _connectVpnOstp(safeConfig)
-            : await _connectVpn(safeConfig);
+            ? await _connectVpnOstp(finalConfig)
+            : await _connectVpn(finalConfig);
         AppLogger.log('VPN: native method returned: success=$success');
         if (!success) {
           AppLogger.log(
@@ -322,18 +339,7 @@ class HomeCubit extends Cubit<HomeState> {
         return;
       }
 
-      String? coreConfigJson;
 
-      try {
-        final vpnCfg = await _vpnRepository.getVpnConfig(useRuEgress: true);
-        final raw = vpnCfg['core_config_json'] as String?;
-        if (raw != null && raw.trim().isNotEmpty) {
-          coreConfigJson = raw;
-        }
-      } catch (e) {
-        AppLogger.log(
-            'Node: failed to fetch core config for anti-block fallback: $e');
-      }
 
       final normalizedTransport = transportMode.trim().toLowerCase();
       final recommendedMtu = normalizedTransport == 'quic' ? 1280 : 1420;
